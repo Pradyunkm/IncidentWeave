@@ -1,15 +1,14 @@
 {
-  "version": 2,
-  "buildCommand": "pnpm build",
-  "devCommand": "pnpm dev",
-  "installCommand": "pnpm install",
+  "name": "incidentweave-live",
   "framework": "nextjs",
-  "outputDirectory": ".next",
-  "env": {
-    "NEXT_PUBLIC_VERCEL_URL": "${VERCEL_URL}"
-  },
-  "github": {
-    "silent": true,
-    "autoAlias": true
+  "installCommand": "npm install --legacy-peer-deps",
+  "buildCommand": "npm run build",
+  "functions": {
+    "app/api/invite-agent/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/stop-conversation/route.ts": {
+      "maxDuration": 30
+    }
   }
 }
