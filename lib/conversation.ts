@@ -5,10 +5,17 @@ import {
   type TranscriptHelperItem,
   type UserTranscription,
 } from 'agora-agent-client-toolkit';
-import {
-  type AgentVisualizerState,
-  type IMessageListItem,
-} from 'agora-agent-uikit';
+import type { AgentVisualizerState } from '@/components/AgentVisualizer';
+
+// Local definition of IMessageListItem — mirrors the shape from agora-agent-uikit
+// so we can drop the uikit package dependency which causes SSR crashes.
+export type IMessageListItem = {
+  turn_id?: string | number;
+  uid: number;
+  text?: string;
+  status?: unknown;
+  createdAt?: number;
+};
 
 // Fixes compacted punctuation emitted by some TTS/ASR providers where sentence-ending
 // characters run directly into the next word (e.g. "Hello.World" → "Hello. World").

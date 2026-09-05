@@ -17,19 +17,12 @@ import { LoadingSkeleton } from './LoadingSkeleton';
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Generates a short, URL-safe unique room ID, e.g. incident-m3kba1-x7f2k */
 function generateRoomId(): string {
   const ts = Date.now().toString(36);
   const rand = Math.random().toString(36).slice(2, 7);
   return `incident-${ts}-${rand}`;
 }
 
-/**
- * Given a raw string from the "Enter a code or link" input, extract the room ID.
- * Accepts:
- *   - A full URL: https://example.com/?room=incident-xxx  → "incident-xxx"
- *   - A bare room code: incident-xxx                      → "incident-xxx"
- */
 function extractRoomId(raw: string): string {
   const trimmed = raw.trim();
   try {
@@ -42,13 +35,6 @@ function extractRoomId(raw: string): string {
   return trimmed;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// App mode — mirrors Google Meet's pre-join states
-//   home      → landing: "New meeting" dropdown + "Enter code" input
-//   instant   → user chose "Start an instant meeting": show name/role → join
-//   later     → user chose "Create for later": show shareable link, don't join
-//   join      → user entered a code or opened a shared link: show name/role → join
-// ─────────────────────────────────────────────────────────────────────────────
 type AppMode = 'home' | 'instant' | 'later' | 'join';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,7 +64,6 @@ const AgoraProvider = dynamic(
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Reusable copy-link row used in both "instant" and "later" modes. */
 function ShareLinkRow({ shareUrl }: { shareUrl: string }) {
   const [copied, setCopied] = useState(false);
   function handleCopy() {
@@ -88,14 +73,14 @@ function ShareLinkRow({ shareUrl }: { shareUrl: string }) {
     });
   }
   return (
-    <div className="w-full rounded-lg border border-blue-500/25 bg-blue-500/8 p-3">
-      <p className="text-xs font-semibold text-blue-400 mb-2">Share with teammates</p>
+    <div className="w-full rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+      <p className="text-xs font-semibold text-cyan-400 mb-2">Share with teammates</p>
       <div className="flex gap-2">
         <input
           readOnly
           value={shareUrl}
           className="flex-1 min-w-0 rounded-md border border-white/10 bg-black/30 px-2.5 py-1.5 text-xs text-white/70 font-mono truncate cursor-text focus:outline-none"
-          onClick={e => (e.target as HTMLInputElement).select()}
+          onClick={(e) => (e.target as HTMLInputElement).select()}
           aria-label="Shareable room link"
         />
         <button
@@ -103,7 +88,7 @@ function ShareLinkRow({ shareUrl }: { shareUrl: string }) {
           className={`flex-shrink-0 rounded-md border px-3 py-1.5 text-xs font-semibold transition-all ${
             copied
               ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400'
-              : 'border-white/15 bg-white/8 text-white/70 hover:border-blue-500/40 hover:bg-blue-500/15 hover:text-blue-400'
+              : 'border-white/15 bg-white/8 text-white/70 hover:border-cyan-500/40 hover:bg-cyan-500/15 hover:text-cyan-400'
           }`}
         >
           {copied ? '✓ Copied!' : 'Copy'}
@@ -114,7 +99,6 @@ function ShareLinkRow({ shareUrl }: { shareUrl: string }) {
   );
 }
 
-/** Name + Role form shared by "instant" and "join" modes. */
 function NameRoleForm({
   participantName,
   onNameChange,
@@ -130,46 +114,68 @@ function NameRoleForm({
   return (
     <div className="w-full space-y-3">
       <div>
-        <label className="block text-xs font-medium text-white/60 mb-1">Your Name</label>
+        <label className="block text-xs font-medium text-white/60 mb-1.5">Your Name</label>
         <input
           type="text"
           value={participantName}
-          onChange={e => onNameChange(e.target.value)}
+          onChange={(e) => onNameChange(e.target.value)}
           placeholder="e.g. Arun Kumar"
           autoFocus
-          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:border-cyan-500/60 focus:outline-none focus:ring-1 focus:ring-cyan-500/40 transition-colors"
         />
       </div>
       <div>
-        <label className="block text-xs font-medium text-white/60 mb-1">Your Role</label>
+        <label className="block text-xs font-medium text-white/60 mb-1.5">Your Role</label>
         <select
           value={participantRole}
-          onChange={e => onRoleChange(e.target.value)}
-          className="w-full rounded-lg border border-white/10 bg-[#1a1a1a] px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          onChange={(e) => onRoleChange(e.target.value)}
+          className="w-full rounded-lg border border-white/10 bg-[#0d1628] px-3 py-2.5 text-sm text-white focus:border-cyan-500/60 focus:outline-none focus:ring-1 focus:ring-cyan-500/40 transition-colors"
         >
-          {roles.map(r => <option key={r} value={r}>{r}</option>)}
+          {roles.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </div>
     </div>
   );
 }
 
-/** Shared card shell with IW logo. */
+/** Glassmorphism card shell */
 function Card({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="mx-auto flex w-[min(92vw,30rem)] animate-fade-up flex-col items-start rounded-[20px] border border-[#2b2b2b] px-8 py-8 shadow-[0_10px_24px_rgba(0,0,0,0.28)]"
+      className="relative mx-auto flex w-full max-w-[530px] animate-fade-up flex-col items-stretch rounded-2xl p-7 sm:p-8"
       style={{
-        backgroundImage:
-          'linear-gradient(164.988deg, rgba(54,54,54,0.2) 1.0596%, rgba(0,0,0,0) 96.089%), linear-gradient(90deg, rgb(16,16,16) 0%, rgb(16,16,16) 100%)',
+        background: 'rgba(13, 20, 40, 0.82)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: '0 0 0 1px rgba(56,189,248,0.06), 0 0 80px rgba(56,189,248,0.05), 0 24px 64px rgba(0,0,0,0.50)',
       }}
     >
-      <div className="flex items-center gap-2 mb-5">
-        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-xs font-bold text-white">
+      {/* Card top accent line */}
+      <div
+        className="absolute top-0 left-8 right-8 h-px"
+        style={{ background: 'linear-gradient(90deg, transparent, rgba(56,189,248,0.4), transparent)' }}
+      />
+
+      {/* Brand header */}
+      <div className="flex items-center gap-3 mb-2">
+        <div
+          className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold text-white shadow-lg"
+          style={{ background: 'linear-gradient(135deg, #3b82f6, #7c3aed)' }}
+        >
           IW
         </div>
-        <span className="text-lg font-semibold text-white">IncidentWeave</span>
+        <div>
+          <div className="text-lg font-bold tracking-tight text-white" style={{ letterSpacing: '-0.01em' }}>
+            IncidentWeave
+          </div>
+          <div className="text-[10px] font-semibold text-cyan-400/70 tracking-widest uppercase">
+            AI Incident Command
+          </div>
+        </div>
       </div>
+
+      <div className="w-full mb-6 h-px bg-white/5" />
       {children}
     </div>
   );
@@ -203,7 +209,17 @@ export default function LandingPage() {
   const [error, setError] = useState<string | null>(null);
   const [agoraData, setAgoraData] = useState<AgoraTokenData | null>(null);
   const [rtmClient, setRtmClient] = useState<RTMClient | null>(null);
+  const rtmClientRef = useRef<RTMClient | null>(null);
   const [agentJoinError, setAgentJoinError] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (rtmClientRef.current) {
+        rtmClientRef.current.logout().catch(() => {});
+        rtmClientRef.current = null;
+      }
+    };
+  }, []);
 
   // ── On mount: if ?room= is in the URL, skip straight to join mode ──────────
   useEffect(() => {
@@ -216,7 +232,6 @@ export default function LandingPage() {
       setShareUrl(`${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(id)}`);
       setMode('join');
     }
-    // If no ?room= param → stay in 'home' mode; room is generated on demand
   }, []);
 
   // ── Close dropdown when clicking outside ──────────────────────────────────
@@ -230,7 +245,7 @@ export default function LandingPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // ── Preload heavy SDK modules so they're ready when the user clicks join ───
+  // ── Preload heavy SDK modules ──────────────────────────────────────────────
   useEffect(() => {
     import('agora-rtc-react').catch(() => {});
     import('agora-rtm').catch(() => {});
@@ -239,45 +254,32 @@ export default function LandingPage() {
   // ─────────────────────────────────────────────────────────────────────────
   // Meeting creation handlers
   // ─────────────────────────────────────────────────────────────────────────
-
-  /** Helper: build + persist a fresh room ID in URL and state */
   function prepareNewRoom(): string {
     const id = generateRoomId();
     const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(id)}`;
     setRoomId(id);
     setShareUrl(url);
     setIsHost(true);
-    // Update address bar — now the URL itself is the shareable link
     window.history.replaceState({}, '', `?room=${encodeURIComponent(id)}`);
     return id;
   }
 
-  /** "New meeting → Start an instant meeting" */
   function handleInstantMeeting() {
     prepareNewRoom();
     setMode('instant');
     setDropdownOpen(false);
   }
 
-  /** "New meeting → Create a meeting for later" */
   function handleCreateForLater() {
     prepareNewRoom();
     setMode('later');
     setDropdownOpen(false);
   }
 
-  /**
-   * "Start now" button on the "create for later" screen.
-   * The room is already set — just move to the name/role form.
-   */
   function handleStartFromLater() {
     setMode('instant');
   }
 
-  /**
-   * "Join" button next to the code/link input.
-   * Accepts a full URL or a bare room code.
-   */
   function handleJoinByCode() {
     const id = extractRoomId(codeInput);
     if (!id) return;
@@ -290,7 +292,6 @@ export default function LandingPage() {
     setCodeInput('');
   }
 
-  /** Back to home screen, clears the URL param */
   function handleBackToHome() {
     setMode('home');
     setRoomId('');
@@ -300,7 +301,7 @@ export default function LandingPage() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Agora session bootstrap (unchanged from original)
+  // Agora session bootstrap
   // ─────────────────────────────────────────────────────────────────────────
   const handleStartConversation = async () => {
     if (!participantName.trim()) return;
@@ -312,7 +313,6 @@ export default function LandingPage() {
     const effectiveName = participantName.trim();
 
     try {
-      // Step 1: Generate Agora RTC + RTM token
       const agoraResponse = await fetch(
         `/api/generate-agora-token?channel=${encodeURIComponent(effectiveRoomId)}`
       );
@@ -323,21 +323,18 @@ export default function LandingPage() {
         throw new Error(`Token error: ${msg}`);
       }
 
-      // Step 2: Register participant in roster (fire-and-forget)
       fetch('/api/incident/roster', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           incidentId: effectiveRoomId,
-          uid: responseData.uid,
-          name: effectiveName,
-          role: participantRole,
+          uid: String(responseData.uid),
+          name: effectiveName || `User ${responseData.uid}`,
+          role: participantRole || 'Engineer',
         }),
       }).catch(() => {});
 
-      // Step 3: Start agent + RTM login in parallel
       const [agentData, rtm] = await Promise.all([
-        // Agent start — non-fatal if it fails (agentJoinError flag)
         fetch('/api/invite-agent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -346,7 +343,7 @@ export default function LandingPage() {
             channel_name: responseData.channel,
           } as ClientStartRequest),
         })
-          .then(async res => {
+          .then(async (res) => {
             const data = await res.json();
             if (!res.ok) {
               console.error('[invite-agent] error:', data);
@@ -355,21 +352,26 @@ export default function LandingPage() {
             }
             return data as AgentResponse;
           })
-          .catch(err => {
+          .catch((err) => {
             console.error('Failed to start conversation with agent:', err);
             setAgentJoinError(true);
             return null;
           }),
 
-        // RTM login — fatal if it fails
         (async () => {
           const { default: AgoraRTM } = await import('agora-rtm');
-          const rtm: RTMClient = new AgoraRTM.RTM(
-            process.env.NEXT_PUBLIC_AGORA_APP_ID!,
-            responseData.uid,
-          );
+          const appId = (process.env.NEXT_PUBLIC_AGORA_APP_ID || '').trim().replace(/[\r\n]/g, '').replace(/\\r|\\n/g, '');
+          // If a previous instance is alive, cleanly logout first to avoid instance duplication & mutual kick
+          if (rtmClientRef.current) {
+            try {
+              await rtmClientRef.current.logout();
+            } catch {}
+            rtmClientRef.current = null;
+          }
+          const rtm: RTMClient = new AgoraRTM.RTM(appId, responseData.uid);
           await rtm.login({ token: responseData.token });
           await rtm.subscribe(responseData.channel);
+          rtmClientRef.current = rtm;
           return rtm;
         })(),
       ]);
@@ -379,8 +381,8 @@ export default function LandingPage() {
         ...responseData,
         agentId: agentData?.agent_id,
         incidentId: effectiveRoomId,
-        participantName: effectiveName,
-        participantRole,
+        participantName: effectiveName || `User ${responseData.uid}`,
+        participantRole: participantRole || 'Engineer',
       });
       setShowConversation(true);
     } catch (err) {
@@ -425,10 +427,18 @@ export default function LandingPage() {
         console.error('Error stopping agent:', error);
       }
     }
-    rtmClient?.logout().catch(err => console.error('RTM logout error:', err));
+    if (rtmClientRef.current) {
+      try {
+        await rtmClientRef.current.logout();
+      } catch (err) {
+        console.error('RTM logout error:', err);
+      }
+      rtmClientRef.current = null;
+    } else if (rtmClient) {
+      rtmClient.logout().catch((err) => console.error('RTM logout error:', err));
+    }
     setRtmClient(null);
     setShowConversation(false);
-    // Return to home; clear the URL so a fresh room can be created
     handleBackToHome();
   };
 
@@ -436,71 +446,71 @@ export default function LandingPage() {
   // Pre-join screens
   // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * HOME — "New meeting" dropdown + "Enter a code or link" input
-   */
   function HomeScreen() {
     return (
       <Card>
-        <p className="text-sm text-white/50 mb-6">
-          AI-powered incident command room — real-time claim extraction, contradiction detection, and action approvals.
+        <p className="text-sm text-white/50 mb-5 leading-relaxed text-left">
+          AI-powered real-time incident command — voice-driven claim extraction, contradiction detection, and human-approved action dispatch.
         </p>
 
-        {/* ── New meeting dropdown ── */}
-        <div className="w-full flex flex-col sm:flex-row gap-3">
+        {/* ── New meeting dropdown + Join row ── */}
+        <div className="w-full flex flex-col sm:flex-row items-stretch gap-2.5 mb-5">
           <div className="relative flex-shrink-0" ref={dropdownRef}>
             <button
-              onClick={() => setDropdownOpen(o => !o)}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors"
+              onClick={() => setDropdownOpen((o) => !o)}
+              className="h-10 w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-white transition-all hover:brightness-110 active:scale-[0.98] whitespace-nowrap shadow-md shadow-blue-500/10"
+              style={{ background: 'linear-gradient(135deg, #2563eb, #7c3aed)' }}
               aria-haspopup="listbox"
               aria-expanded={dropdownOpen}
             >
-              {/* video icon */}
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
               </svg>
-              New meeting
-              {/* chevron */}
-              <svg className={`w-3.5 h-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <span>New Incident</span>
+              <svg className={`w-3.5 h-3.5 transition-transform flex-shrink-0 ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
 
             {dropdownOpen && (
               <div
-                className="absolute left-0 top-full mt-1.5 z-50 min-w-[220px] rounded-xl border border-white/10 bg-[#1a1f2e] shadow-2xl overflow-hidden"
+                className="absolute left-0 top-full mt-2 z-50 min-w-[240px] rounded-xl overflow-hidden shadow-2xl"
+                style={{
+                  background: 'rgba(13,20,40,0.96)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+                }}
                 role="listbox"
               >
-                {/* Option 1: Start instant meeting */}
                 <button
                   role="option"
                   onClick={handleInstantMeeting}
-                  className="flex items-start gap-3 w-full px-4 py-3 hover:bg-white/5 transition-colors text-left"
+                  className="flex items-start gap-3 w-full px-4 py-3.5 hover:bg-white/5 transition-colors text-left"
                 >
-                  <span className="mt-0.5 flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center">
-                    <svg className="w-3 h-3 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                  <span className="mt-0.5 flex-shrink-0 w-7 h-7 rounded-full bg-cyan-500/15 flex items-center justify-center">
+                    <svg className="w-3.5 h-3.5 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clipRule="evenodd" />
                     </svg>
                   </span>
                   <div>
-                    <p className="text-sm font-medium text-white">Start an instant meeting</p>
+                    <p className="text-sm font-semibold text-white">Start an instant meeting</p>
                     <p className="text-xs text-white/40 mt-0.5">Create a new room and join now</p>
                   </div>
                 </button>
 
-                {/* Option 2: Create for later */}
                 <button
                   role="option"
                   onClick={handleCreateForLater}
-                  className="flex items-start gap-3 w-full px-4 py-3 hover:bg-white/5 transition-colors text-left border-t border-white/5"
+                  className="flex items-start gap-3 w-full px-4 py-3.5 hover:bg-white/5 transition-colors text-left border-t border-white/5"
                 >
-                  <span className="mt-0.5 flex-shrink-0 w-6 h-6 rounded-full bg-violet-500/20 flex items-center justify-center">
-                    <svg className="w-3 h-3 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <span className="mt-0.5 flex-shrink-0 w-7 h-7 rounded-full bg-violet-500/15 flex items-center justify-center">
+                    <svg className="w-3.5 h-3.5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.1-1.1m-.758-4.9a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                     </svg>
                   </span>
                   <div>
-                    <p className="text-sm font-medium text-white">Create a meeting for later</p>
+                    <p className="text-sm font-semibold text-white">Create a meeting for later</p>
                     <p className="text-xs text-white/40 mt-0.5">Get a link to share — you won&apos;t join yet</p>
                   </div>
                 </button>
@@ -508,45 +518,64 @@ export default function LandingPage() {
             )}
           </div>
 
-          {/* ── Enter code or link ── */}
-          <div className="flex flex-1 gap-2">
+          {/* ── Enter code or link + Join ── */}
+          <div className="flex flex-1 min-w-0 items-center gap-2">
             <input
               type="text"
               value={codeInput}
-              onChange={e => setCodeInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && codeInput.trim() && handleJoinByCode()}
+              onChange={(e) => setCodeInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && codeInput.trim() && handleJoinByCode()}
               placeholder="Enter a code or link"
-              className="flex-1 min-w-0 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="h-10 flex-1 min-w-0 rounded-xl border border-white/10 bg-white/5 px-3.5 text-sm text-white placeholder:text-white/25 focus:border-cyan-500/50 focus:bg-white/[0.07] focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-all"
               aria-label="Room code or link"
             />
             <button
               onClick={handleJoinByCode}
               disabled={!codeInput.trim()}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-blue-400 hover:bg-blue-500/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className={`h-10 flex-shrink-0 px-4 rounded-xl text-sm font-semibold transition-all whitespace-nowrap border ${
+                codeInput.trim()
+                  ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 active:scale-[0.98]'
+                  : 'border-white/10 bg-transparent text-white/25 cursor-not-allowed'
+              }`}
             >
               Join
             </button>
           </div>
         </div>
+
+        {/* Feature pills */}
+        <div className="w-full grid grid-cols-2 gap-2">
+          {[
+            { icon: '🎙️', label: 'Real-time voice' },
+            { icon: '🕸️', label: 'Truth Graph' },
+            { icon: '⚡', label: 'Conflict detection' },
+            { icon: '✅', label: 'Human approval' },
+          ].map(({ icon, label }) => (
+            <div
+              key={label}
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/40"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+            >
+              <span>{icon}</span>
+              <span>{label}</span>
+            </div>
+          ))}
+        </div>
       </Card>
     );
   }
 
-  /**
-   * CREATE FOR LATER — shows the shareable link, no join form
-   */
   function CreateForLaterScreen() {
     return (
       <Card>
-        <p className="text-sm text-white/60 mb-1">Your meeting link is ready</p>
+        <p className="text-sm text-white/60 mb-1">Your incident room is ready</p>
         <p className="text-xs text-white/35 mb-5">
           Share this link with your team. You can join when the incident starts.
         </p>
 
-        {/* Room ID display */}
         <div className="w-full mb-3">
-          <label className="block text-xs font-medium text-white/40 mb-1">Room ID</label>
-          <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+          <label className="block text-xs font-medium text-white/40 mb-1.5">Room ID</label>
+          <div className="flex items-center gap-2 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
             <span className="text-sm text-white/70 font-mono truncate flex-1">{roomId}</span>
           </div>
         </div>
@@ -556,13 +585,14 @@ export default function LandingPage() {
         <div className="mt-5 w-full flex gap-3">
           <button
             onClick={handleBackToHome}
-            className="flex-1 h-10 rounded-lg border border-white/15 text-sm font-medium text-white/60 hover:text-white hover:border-white/30 transition-colors"
+            className="flex-1 h-10 rounded-xl border border-white/12 text-sm font-medium text-white/60 hover:text-white hover:border-white/25 transition-colors"
           >
             Back
           </button>
           <button
             onClick={handleStartFromLater}
-            className="flex-1 h-10 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-semibold text-white transition-colors"
+            className="flex-1 h-10 rounded-xl text-sm font-semibold text-white transition-all hover:brightness-110"
+            style={{ background: 'linear-gradient(135deg, #2563eb, #7c3aed)' }}
           >
             Start now
           </button>
@@ -571,36 +601,29 @@ export default function LandingPage() {
     );
   }
 
-  /**
-   * INSTANT / JOIN — name + role form, then enters the room
-   * Used for both "instant meeting" (isHost=true) and "join via link/code" (isHost=false).
-   */
   function JoinFormScreen() {
     return (
       <Card>
-        {/* Room context */}
         <div className="w-full mb-4">
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-between mb-1.5">
             <label className="text-xs font-medium text-white/40">Room</label>
             {!isHost && (
-              <span className="text-[10px] font-semibold text-blue-400 border border-blue-500/30 bg-blue-500/10 rounded px-1.5 py-0.5">
+              <span className="text-[10px] font-semibold text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 rounded px-1.5 py-0.5">
                 Via Link
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+          <div className="flex items-center gap-2 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
             <span className="text-sm text-white/70 font-mono truncate flex-1">{roomId}</span>
           </div>
         </div>
 
-        {/* Share link — only for host (instant meeting creator) */}
         {isHost && shareUrl && (
           <div className="w-full mb-4">
             <ShareLinkRow shareUrl={shareUrl} />
           </div>
         )}
 
-        {/* Name + Role */}
         <NameRoleForm
           participantName={participantName}
           onNameChange={setParticipantName}
@@ -611,7 +634,8 @@ export default function LandingPage() {
         <button
           onClick={handleStartConversation}
           disabled={isLoading || !participantName.trim()}
-          className="mt-5 h-10 w-full rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="mt-5 h-11 w-full rounded-xl text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110"
+          style={{ background: 'linear-gradient(135deg, #2563eb, #7c3aed)' }}
         >
           {isLoading
             ? (isHost ? 'Creating...' : 'Joining...')
@@ -620,7 +644,7 @@ export default function LandingPage() {
         {!participantName.trim() && !isLoading && (
           <p className="mt-2 text-[10px] text-white/30 text-center">Enter your name to continue</p>
         )}
-        {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+        {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
 
         <button
           onClick={handleBackToHome}
@@ -632,67 +656,73 @@ export default function LandingPage() {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────────────────
   function PreCallContent() {
-    if (mode === 'home')    return <HomeScreen />;
-    if (mode === 'later')   return <CreateForLaterScreen />;
-    // 'instant' and 'join' both use the name/role form
+    if (mode === 'home') return <HomeScreen />;
+    if (mode === 'later') return <CreateForLaterScreen />;
     return <JoinFormScreen />;
   }
 
   return (
-    <div className="relative flex h-dvh min-h-screen flex-col overflow-hidden bg-background text-foreground">
+    <div className="relative flex h-dvh min-h-screen flex-col overflow-hidden text-white" style={{ background: '#07111f' }}>
+      {/* Ambient glow background — only on pre-call screens */}
+      {!showConversation && (
+        <>
+          <div className="iw-glow-a" />
+          <div className="iw-glow-b" />
+          <div className="iw-glow-c" />
+        </>
+      )}
+
       <div
-        className={`flex min-h-0 flex-1 flex-col ${
-          showConversation ? 'items-stretch justify-start' : 'items-center justify-center'
+        className={`relative z-10 flex min-h-0 flex-1 flex-col ${
+          showConversation ? 'h-full w-full items-stretch justify-start' : 'items-center justify-center px-4 py-8'
         }`}
       >
-        <div
-          className={`z-10 flex min-h-0 flex-1 flex-col ${
-            showConversation
-              ? 'h-full w-full max-w-none items-stretch gap-0 px-0 text-left'
-              : 'w-full max-w-none items-center justify-center px-4 text-center'
-          }`}
-        >
-          {!showConversation ? (
-            <PreCallContent />
-          ) : agoraData && rtmClient ? (
-            <>
-              {agentJoinError && (
-                <div className="p-3 bg-destructive/10 rounded-md text-destructive text-sm max-w-sm">
-                  Failed to connect with AI agent. The conversation may not work as expected.
-                </div>
-              )}
-              <Suspense fallback={<LoadingSkeleton />}>
-                <ErrorBoundary>
-                  <AgoraProvider>
-                    <ConversationComponent
-                      agoraData={agoraData}
-                      rtmClient={rtmClient}
-                      onTokenWillExpire={handleTokenWillExpire}
-                      onEndConversation={handleEndConversation}
-                    />
-                  </AgoraProvider>
-                </ErrorBoundary>
-              </Suspense>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">Failed to load conversation data.</p>
-          )}
-        </div>
+        {/* Landing tagline — only on home screen */}
+        {!showConversation && mode === 'home' && (
+          <div className="mb-6 w-full flex justify-center animate-fade-up">
+            <p className="text-[11px] font-semibold tracking-[0.28em] text-cyan-400/70 uppercase">
+              Listen · Understand · Detect · Coordinate · Act
+            </p>
+          </div>
+        )}
+
+        {!showConversation ? (
+          <PreCallContent />
+        ) : agoraData && rtmClient ? (
+          <div className="h-full w-full max-w-none items-stretch gap-0 px-0 text-left flex flex-col flex-1 min-h-0">
+            {agentJoinError && (
+              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-md text-red-400 text-sm max-w-sm m-2">
+                Failed to connect with AI agent. The conversation may not work as expected.
+              </div>
+            )}
+            <Suspense fallback={<LoadingSkeleton />}>
+              <ErrorBoundary>
+                <AgoraProvider>
+                  <ConversationComponent
+                    agoraData={agoraData}
+                    rtmClient={rtmClient}
+                    onTokenWillExpire={handleTokenWillExpire}
+                    onEndConversation={handleEndConversation}
+                  />
+                </AgoraProvider>
+              </ErrorBoundary>
+            </Suspense>
+          </div>
+        ) : (
+          <p className="text-sm text-white/40">Failed to load conversation data.</p>
+        )}
       </div>
 
       {/* Attribution footer */}
       <footer className="fixed bottom-0 right-0 z-40 py-4 pr-4 md:py-6 md:pr-6">
-        <div className="flex items-center justify-end gap-2 text-muted-foreground">
+        <div className="flex items-center justify-end gap-2 text-white/30">
           <span className="text-xs font-medium tracking-wide uppercase">Powered by</span>
           <a
             href="https://agora.io/en/"
             target="_blank"
             rel="noopener noreferrer"
-            className="hover:text-primary transition-colors"
+            className="hover:opacity-70 transition-opacity"
             aria-label="Visit Agora's website"
           >
             <Image
@@ -701,7 +731,7 @@ export default function LandingPage() {
               width={86}
               height={24}
               priority
-              className="h-6 w-auto hover:opacity-80 transition-opacity translate-y-1"
+              className="h-6 w-auto translate-y-1 opacity-50 hover:opacity-70 transition-opacity"
             />
             <span className="sr-only">Agora</span>
           </a>

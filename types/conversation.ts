@@ -5,11 +5,22 @@ export interface AgoraTokenData {
   uid: string;
   channel: string;
   agentId?: string;
+  // Multi-party incident room fields set by LandingPage at join time
+  incidentId?: string;
+  participantName?: string;
+  participantRole?: string;
 }
 
 export interface ClientStartRequest {
-  requester_id: string;
+  requester_id?: string;
+  requester_ids?: string[];
   channel_name: string;
+}
+
+export interface RosterEntry {
+  uid: string;
+  name: string;
+  role: string;
 }
 
 export interface StopConversationRequest {

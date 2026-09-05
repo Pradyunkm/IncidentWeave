@@ -43,7 +43,24 @@ export async function GET(request: NextRequest) {
       expirationTime,
       expirationTime,
     );
-    // console.log('Token generated successfully (RTC + RTM)');
+
+    if (!token) {
+      return NextResponse.json(
+        {
+          error: 'Token generation failed: Agora returned empty token. Verify App ID and Certificate.',
+          debug: {
+            appIdLength: APP_ID.length,
+            appCertLength: APP_CERTIFICATE.length,
+            appIdChars: APP_ID.split('').map(c => c.charCodeAt(0)),
+            appCertChars: APP_CERTIFICATE.split('').map(c => c.charCodeAt(0)),
+            channelLength: channelName.length,
+            uidStr: uid.toString(),
+            expirationTime,
+          }
+        },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json({
       token,

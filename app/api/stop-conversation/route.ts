@@ -34,8 +34,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const appId = process.env.NEXT_PUBLIC_AGORA_APP_ID;
-    const appCertificate = process.env.NEXT_AGORA_APP_CERTIFICATE;
+    const appId = (process.env.NEXT_PUBLIC_AGORA_APP_ID || '').trim();
+    const appCertificate = (process.env.NEXT_AGORA_APP_CERTIFICATE || '').trim();
     if (!appId || !appCertificate) {
       throw new Error(
         'Missing Agora configuration. Set NEXT_PUBLIC_AGORA_APP_ID and NEXT_AGORA_APP_CERTIFICATE.',

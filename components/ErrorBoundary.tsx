@@ -43,9 +43,14 @@ export class ErrorBoundary extends React.Component<
             <h2 className="text-lg font-semibold text-destructive mb-4">
               Something went wrong
             </h2>
-            <p className="text-muted-foreground text-sm mb-6">
-              An error occurred while loading the conversation. Please try refreshing the page.
+            <p className="text-muted-foreground text-sm mb-4">
+              {this.state.error?.message || 'An error occurred while loading the conversation. Please try refreshing the page.'}
             </p>
+            {this.state.error?.stack && (
+              <pre className="text-xs text-red-400/90 bg-black/60 p-3 rounded text-left overflow-auto max-h-48 mb-4 whitespace-pre-wrap font-mono">
+                {this.state.error.stack}
+              </pre>
+            )}
             <Button onClick={() => window.location.reload()}>
               Refresh Page
             </Button>

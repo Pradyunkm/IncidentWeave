@@ -1,7 +1,6 @@
 {
-  "name": "incidentweave-live",
   "framework": "nextjs",
-  "installCommand": "npm install --legacy-peer-deps",
+  "installCommand": "npm install",
   "buildCommand": "npm run build",
   "functions": {
     "app/api/invite-agent/route.ts": {
