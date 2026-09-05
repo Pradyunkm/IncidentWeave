@@ -5,6 +5,7 @@ import AgoraRTC, {
   useRTCClient,
   useLocalMicrophoneTrack,
   useRemoteUsers,
+  useRemoteAudioTracks,
   useClientEvent,
   useJoin,
   usePublish,
@@ -102,14 +103,17 @@ export default function ConversationComponent({
   const client = useRTCClient();
   const remoteUsers = useRemoteUsers();
 
-  // Automatically play audio from remote participants and the AI agent
+  // Subscribe to and auto-play all remote audio tracks (includes AI agent + human participants).
+  // useRemoteAudioTracks handles both subscription and playback — replacing manual track.play() calls
+  // which failed when tracks weren't yet subscribed.
+  const { audioTracks: remoteAudioTracks } = useRemoteAudioTracks(remoteUsers);
   useEffect(() => {
-    remoteUsers.forEach((user) => {
-      if (user.hasAudio && user.audioTrack && !user.audioTrack.isPlaying) {
-        user.audioTrack.play();
+    remoteAudioTracks.forEach((track) => {
+      if (!track.isPlaying) {
+        track.play();
       }
     });
-  }, [remoteUsers]);
+  }, [remoteAudioTracks]);
 
   const [isEnabled, setIsEnabled] = useState(true);
   const [isAgentConnected, setIsAgentConnected] = useState(false);
@@ -569,20 +573,10 @@ export default function ConversationComponent({
 
   useClientEvent(client, 'user-joined', (user) => {
     if (user.uid.toString() === agentUID) setIsAgentConnected(true);
-    else {
-      // Register any newly-joining human participant in the roster so the dashboard
-      // can display their name. They will have set their real name in LandingPage.
-      fetch('/api/incident/roster', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          incidentId,
-          uid: String(user.uid),
-          name: agoraData.participantName ?? 'Participant',
-          role: agoraData.participantRole ?? 'Participant',
-        }),
-      }).catch(() => {});
-    }
+    // NOTE: We intentionally do NOT register the remote user's name here — we only know
+    // their UID, not their chosen display name. Each participant registers themselves
+    // with their real name via the joinSuccess effect and handleStartConversation.
+    // Registering with our own name here would cause duplicate/wrong-name entries.
   });
 
   useClientEvent(client, 'user-left', (user) => {
@@ -716,11 +710,11 @@ export default function ConversationComponent({
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
               <span>People</span>
-              {/* Live participant count badge */}
+              {/* Live participant count badge: roster entries + AI agent */}
               <span className={`ml-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-[10px] font-bold ${
                 isParticipantsOpen ? 'bg-white/20 text-white' : 'bg-emerald-500/20 text-emerald-400'
               }`}>
-                {Object.keys(roster).length || 1}
+                {participantList.length + 1 /* +1 for AI agent */}
               </span>
             </button>
 

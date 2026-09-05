@@ -2,6 +2,7 @@
   "framework": "nextjs",
   "installCommand": "npm install",
   "buildCommand": "npm run build",
+  "alias": ["incidentweave-live.vercel.app"],
   "functions": {
     "app/api/invite-agent/route.ts": {
       "maxDuration": 60

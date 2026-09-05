@@ -49,10 +49,21 @@ export function MeetingChat({
   const [unreadDm, setUnreadDm] = useState<Record<string, number>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Stable ref for the latest handler context — avoids removing/re-adding the
+  // RTM listener every time roster/tab/dmTarget changes (which happened every ~3.5s
+  // and created a window where incoming messages could be dropped).
+  const handlerCtxRef = useRef({ roster, tab, dmTarget, myUid, myName, myRole });
+  useEffect(() => {
+    handlerCtxRef.current = { roster, tab, dmTarget, myUid, myName, myRole };
+  }, [roster, tab, dmTarget, myUid, myName, myRole]);
+
   // Fetch historical messages on mount
   useEffect(() => {
     fetch(`/api/chat/messages?id=${encodeURIComponent(incidentId)}`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then(data => {
         if (data.messages) {
           setMessages(data.messages.map((m: ChatMessage) => ({
@@ -61,10 +72,14 @@ export function MeetingChat({
           })));
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error('[MeetingChat] Failed to load chat history:', err);
+      });
   }, [incidentId, myUid]);
 
-  // Listen for incoming RTM chat messages
+  // Listen for incoming RTM chat messages — registered ONCE per rtmClient instance.
+  // Uses a stable ref so the listener never needs to be re-registered when
+  // roster/tab/dmTarget change.
   useEffect(() => {
     const handleMessage = (event: { message: string | Uint8Array; publisher: string }) => {
       let parsed: Record<string, unknown>;
@@ -78,15 +93,17 @@ export function MeetingChat({
       }
       if (parsed.type !== RTM_CHAT_TYPE) return;
 
+      const { roster: r, tab: t, dmTarget: dt, myUid: uid, myName: name, myRole: role } = handlerCtxRef.current;
+      const isSelf = event.publisher === uid;
       const msg: ChatMessage = {
         id: parsed.id as string,
         from: event.publisher,
-        fromName: (parsed.fromName as string) || roster[event.publisher]?.name || `UID ${event.publisher}`,
-        fromRole: (parsed.fromRole as string) || roster[event.publisher]?.role || '',
+        fromName: isSelf ? name : ((parsed.fromName as string) || r[event.publisher]?.name || `UID ${event.publisher}`),
+        fromRole: isSelf ? role : ((parsed.fromRole as string) || r[event.publisher]?.role || ''),
         to: parsed.to as 'group' | string,
         text: parsed.text as string,
         timestamp: parsed.timestamp as number,
-        isOwn: false,
+        isOwn: isSelf,
       };
 
       setMessages(prev => {
@@ -94,18 +111,20 @@ export function MeetingChat({
         return [...prev, msg];
       });
 
-      // Unread badge logic
-      if (msg.to === 'group' && tab !== 'group') {
-        setUnreadGroup(n => n + 1);
-      }
-      if (msg.to === myUid && (tab !== 'dm' || dmTarget !== msg.from)) {
-        setUnreadDm(prev => ({ ...prev, [msg.from]: (prev[msg.from] ?? 0) + 1 }));
+      // Unread badge logic — skip for own echoed messages
+      if (!isSelf) {
+        if (msg.to === 'group' && t !== 'group') {
+          setUnreadGroup(n => n + 1);
+        }
+        if (msg.to === uid && (t !== 'dm' || dt !== msg.from)) {
+          setUnreadDm(prev => ({ ...prev, [msg.from]: (prev[msg.from] ?? 0) + 1 }));
+        }
       }
     };
 
     rtmClient.addEventListener('message', handleMessage);
     return () => rtmClient.removeEventListener('message', handleMessage);
-  }, [rtmClient, roster, tab, dmTarget, myUid]);
+  }, [rtmClient]); // Only re-register when the rtmClient instance itself changes
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
