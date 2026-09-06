@@ -151,16 +151,25 @@ export default function ConversationComponent({
   // AI Agent audio tracks: strictly silenced until the user clicks the Speak button.
   const [isAgentSpeechAllowed, setIsAgentSpeechAllowed] = useState(false);
   const [isAgentPrompting, setIsAgentPrompting] = useState(false);
-  // Transcript clear: any message with createdAt <= clearedBefore is hidden from the panel.
-  const [clearedBefore, setClearedBefore] = useState<number>(0);
+  // Master persistent transcript store: retains ALL completed turns (local, remote, agent).
+  // Turns are NEVER deleted automatically. They are ONLY deleted when the user clicks "Clear".
+  const [accumulatedTurns, setAccumulatedTurns] = useState<Record<string, IMessageListItem>>({});
+  const clearedTurnIdsRef = useRef<Set<string>>(new Set());
+
   const handleClearTranscript = useCallback(() => {
-    setClearedBefore(Date.now() + 5000);
+    // Record all existing turn IDs as cleared so late-arriving packets are ignored
+    const existingIds = Object.keys(accumulatedTurns);
+    clearedTurnIdsRef.current = new Set(existingIds);
+
+    // Empty state
+    setAccumulatedTurns({});
     setSharedTranscripts({});
     setRawTranscript([]);
+
     fetch(`/api/incident/transcript?id=${encodeURIComponent(incidentId)}`, {
       method: 'DELETE',
     }).catch(() => {});
-  }, [incidentId]);
+  }, [incidentId, accumulatedTurns]);
   const { audioTracks: agentAudioTracks } = useRemoteAudioTracks(agentRemoteUsers);
 
   useEffect(() => {
@@ -587,10 +596,27 @@ export default function ConversationComponent({
           isAgent?: boolean;
         };
 
+        const turnIdStr = String(item.turn_id);
+        if (!clearedTurnIdsRef.current.has(turnIdStr)) {
+          setAccumulatedTurns((prev) => ({
+            ...prev,
+            [turnIdStr]: {
+              turn_id: item.turn_id,
+              uid: item.uid,
+              speakerName: item.speakerName,
+              speakerRole: item.speakerRole || 'Engineer',
+              text: item.text,
+              status: item.status,
+              createdAt: item.createdAt,
+              isAgent: Boolean(item.isAgent),
+            },
+          }));
+        }
+
         if (String(item.uid) !== String(client.uid)) {
           setSharedTranscripts((prev) => ({
             ...prev,
-            [String(item.turn_id)]: {
+            [turnIdStr]: {
               turn_id: item.turn_id,
               uid: item.uid,
               speakerName: item.speakerName,
@@ -789,6 +815,16 @@ export default function ConversationComponent({
       .then((r) => r.json())
       .then((data) => {
         if (mounted && Array.isArray(data.transcripts)) {
+          setAccumulatedTurns((prev) => {
+            const next = { ...prev };
+            for (const item of data.transcripts) {
+              const id = String(item.turn_id);
+              if (!clearedTurnIdsRef.current.has(id) && !next[id]) {
+                next[id] = item;
+              }
+            }
+            return next;
+          });
           setSharedTranscripts((prev) => {
             const next = { ...prev };
             for (const item of data.transcripts) {
@@ -904,6 +940,8 @@ export default function ConversationComponent({
 
     rawTranscript.forEach((item) => {
       const turnIdStr = String(item.turn_id);
+      if (clearedTurnIdsRef.current.has(turnIdStr)) return;
+
       const text = typeof item.text === 'string' ? item.text.trim() : '';
       if (!text) return;
 
@@ -911,6 +949,42 @@ export default function ConversationComponent({
         String(item.uid) === agentUID || String(item.uid) === String(DEFAULT_AGENT_UID);
 
       const speakerInfo = resolveTurnSpeaker(item);
+
+      // Commit completed turns to master store so they are NEVER lost when toolkit purges internal buffer
+      if (item.status === TurnStatus.END || item.status === TurnStatus.INTERRUPTED) {
+        setAccumulatedTurns((prev) => {
+          const existing = prev[turnIdStr];
+          if (existing && existing.status === item.status && existing.text === text) {
+            return prev;
+          }
+          const resolvedSpeakerName = isAgentTurn
+            ? 'IncidentWeave AI'
+            : (existing?.speakerName || speakerInfo.name);
+          const resolvedSpeakerRole = isAgentTurn
+            ? 'AI Incident Commander'
+            : (existing?.speakerRole || speakerInfo.role);
+          const resolvedUid = isAgentTurn
+            ? agentUID
+            : (existing?.uid || speakerInfo.uid);
+
+          return {
+            ...prev,
+            [turnIdStr]: {
+              turn_id: item.turn_id,
+              uid: resolvedUid,
+              text,
+              status: item.status,
+              createdAt:
+                typeof item._time === 'number'
+                  ? normalizeTimestampMs(item._time)
+                  : existing?.createdAt || Date.now(),
+              speakerName: resolvedSpeakerName,
+              speakerRole: resolvedSpeakerRole,
+              isAgent: isAgentTurn,
+            },
+          };
+        });
+      }
 
       // Only broadcast and save to Redis if this turn was spoken by the local user!
       if (!isAgentTurn && speakerInfo.isLocal) {
@@ -1042,14 +1116,25 @@ export default function ConversationComponent({
   }, [roster, agoraData, remoteUsers, agentUID]);
 
   // Unified chronological transcript combining:
-  // 1. Local turns (both in-progress and completed from AgoraVoiceAI)
+  // 1. Master accumulated turns (retains every completed turn permanently until user clicks Clear)
   // 2. Remote human turns received via RTM / hydrated from Redis
-  // 3. Agent turns
+  // 3. Live turns from AgoraVoiceAI (including current in-progress stream)
   const unifiedTranscriptMap = useMemo(() => {
     const map = new Map<string, IMessageListItem>();
 
-    // 1. Seed with shared/remote/hydrated transcripts
+    // 1. Seed with accumulated completed history (never deleted unless user clicks Clear)
+    Object.values(accumulatedTurns).forEach((item) => {
+      const turnIdStr = String(item.turn_id);
+      if (!clearedTurnIdsRef.current.has(turnIdStr)) {
+        map.set(turnIdStr, item);
+      }
+    });
+
+    // 2. Overlay shared/remote/hydrated transcripts
     Object.values(sharedTranscripts).forEach((item) => {
+      const turnIdStr = String(item.turn_id);
+      if (clearedTurnIdsRef.current.has(turnIdStr)) return;
+
       const isAgent =
         String(item.uid) === agentUID ||
         String(item.uid) === String(DEFAULT_AGENT_UID) ||
@@ -1058,7 +1143,7 @@ export default function ConversationComponent({
       const cleanCurrent = (agoraData.participantName || '').trim().toLowerCase();
       const isCurrentUserName = Boolean(cleanCurrent && cleanSpeaker && cleanSpeaker === cleanCurrent);
 
-      map.set(String(item.turn_id), {
+      map.set(turnIdStr, {
         ...item,
         isAgent,
         speakerName: isAgent
@@ -1070,21 +1155,22 @@ export default function ConversationComponent({
           ? 'AI Incident Commander'
           : isCurrentUserName && agoraData.participantRole
             ? agoraData.participantRole
-            : (item.speakerRole || ''),
+            : (item.speakerRole || 'Engineer'),
       });
     });
 
-    // 2. Overlay normalized turns from AgoraVoiceAI
-    // Preserves remote speaker attribution from sharedTranscripts / resolveTurnSpeaker
+    // 3. Overlay live turns from AgoraVoiceAI
     transcript.forEach((item) => {
       const turnIdStr = String(item.turn_id);
+      if (clearedTurnIdsRef.current.has(turnIdStr)) return;
+
       const existing = map.get(turnIdStr);
       const uidStr = String(item.uid);
       const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
 
       const speakerInfo = resolveTurnSpeaker(item);
 
-      // Do NOT overwrite existing remote speaker names from sharedTranscripts!
+      // Do NOT overwrite existing remote speaker names from sharedTranscripts or accumulatedTurns!
       const resolvedSpeakerName = isAgent
         ? 'IncidentWeave AI'
         : (existing?.speakerName || speakerInfo.name);
@@ -1113,7 +1199,7 @@ export default function ConversationComponent({
     });
 
     return map;
-  }, [sharedTranscripts, transcript, client?.uid, agentUID, agoraData, roster, resolveTurnSpeaker]);
+  }, [accumulatedTurns, sharedTranscripts, transcript, client?.uid, agentUID, agoraData, roster, resolveTurnSpeaker]);
 
   // Completed (END + INTERRUPTED) messages shown as history.
   // 1. Human turns (local and remote) ALWAYS show when anyone speaks.
@@ -1399,13 +1485,8 @@ export default function ConversationComponent({
         pipelineMetrics={<QuickstartPipelineMetrics metrics={agentMetrics} />}
         transcriptPanel={
           <QuickstartTranscriptPanel
-            messageList={clearedBefore > 0 ? messageList.filter(m => (m.createdAt ?? 0) > clearedBefore) : messageList}
-            currentInProgressMessage={
-              currentInProgressMessage &&
-              (clearedBefore === 0 || (currentInProgressMessage.createdAt ?? Date.now()) > clearedBefore)
-                ? currentInProgressMessage
-                : null
-            }
+            messageList={messageList}
+            currentInProgressMessage={currentInProgressMessage}
             agentUID={agentUID}
             localUID={String(client.uid)}
             roster={roster}

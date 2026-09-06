@@ -56,9 +56,8 @@ export function QuickstartTranscriptPanel({
   onClear,
 }: QuickstartTranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
 
-  const messages = useMemo(
+  const visibleMessages = useMemo(
     () =>
       currentInProgressMessage
         ? [...messageList, currentInProgressMessage]
@@ -66,19 +65,7 @@ export function QuickstartTranscriptPanel({
     [currentInProgressMessage, messageList],
   );
 
-  const visibleMessages = useMemo(() => {
-    return messages.filter((m, idx) => {
-      const turnKey = String(m.turn_id ?? `${m.uid}_${idx}`);
-      return !clearedIds.has(turnKey);
-    });
-  }, [messages, clearedIds]);
-
   const handleClear = () => {
-    const ids = new Set<string>(clearedIds);
-    messages.forEach((m, idx) => {
-      ids.add(String(m.turn_id ?? `${m.uid}_${idx}`));
-    });
-    setClearedIds(ids);
     onClear?.();
   };
 
