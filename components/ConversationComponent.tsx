@@ -99,6 +99,7 @@ export default function ConversationComponent({
   rtmClient,
   onTokenWillExpire,
   onEndConversation,
+  recorderStopRef,
 }: ConversationComponentProps) {
   const client = useRTCClient();
   const remoteUsers = useRemoteUsers();
@@ -690,6 +691,7 @@ export default function ConversationComponent({
               localMicrophoneTrack={localMicrophoneTrack}
               remoteUsers={remoteUsers}
               incidentId={incidentId}
+              onStopRef={recorderStopRef}
             />
 
             {/* Participants Panel Toggle */}
@@ -754,6 +756,7 @@ export default function ConversationComponent({
             messageList={messageList}
             currentInProgressMessage={currentInProgressMessage}
             agentUID={agentUID}
+            localUID={String(client.uid)}
           />
         }
         visualizer={

@@ -194,8 +194,28 @@ export default function LandingPage() {
   const [isHost, setIsHost] = useState(true);
 
   // ── participant identity ───────────────────────────────────────────────────
-  const [participantName, setParticipantName] = useState('');
-  const [participantRole, setParticipantRole] = useState('Engineer');
+  const [participantName, setParticipantNameState] = useState('');
+  const [participantRole, setParticipantRoleState] = useState('Engineer');
+
+  // Persist name/role in localStorage — restored on next visit
+  const setParticipantName = (v: string) => {
+    setParticipantNameState(v);
+    try { localStorage.setItem('iw_participant_name', v); } catch {}
+  };
+  const setParticipantRole = (v: string) => {
+    setParticipantRoleState(v);
+    try { localStorage.setItem('iw_participant_role', v); } catch {}
+  };
+
+  // Restore saved identity from previous session without exposing name in URL
+  useEffect(() => {
+    try {
+      const savedName = localStorage.getItem('iw_participant_name');
+      const savedRole = localStorage.getItem('iw_participant_role');
+      if (savedName) setParticipantNameState(savedName);
+      if (savedRole) setParticipantRoleState(savedRole);
+    } catch {}
+  }, []);
 
   // ── "Enter a code or link" input on the home screen ───────────────────────
   const [codeInput, setCodeInput] = useState('');
@@ -211,6 +231,8 @@ export default function LandingPage() {
   const [rtmClient, setRtmClient] = useState<RTMClient | null>(null);
   const rtmClientRef = useRef<RTMClient | null>(null);
   const [agentJoinError, setAgentJoinError] = useState(false);
+  // Ref that MeetingRecorder exposes so we can auto-stop recording before leaving
+  const recorderStopRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     return () => {
@@ -415,12 +437,21 @@ export default function LandingPage() {
   );
 
   const handleEndConversation = async () => {
+    // Auto-stop recording so the file is saved before the room tears down
+    if (recorderStopRef.current) {
+      try { recorderStopRef.current(); } catch {}
+      recorderStopRef.current = null;
+    }
+
     if (agoraData?.agentId) {
       try {
         const response = await fetch('/api/stop-conversation', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent_id: agoraData.agentId }),
+          body: JSON.stringify({
+            agent_id: agoraData.agentId,
+            channel_name: agoraData.channel, // enables Redis cache clear
+          }),
         });
         if (!response.ok) console.error('Failed to stop agent:', await response.text());
       } catch (error) {
@@ -704,6 +735,7 @@ export default function LandingPage() {
                     rtmClient={rtmClient}
                     onTokenWillExpire={handleTokenWillExpire}
                     onEndConversation={handleEndConversation}
+                    recorderStopRef={recorderStopRef}
                   />
                 </AgoraProvider>
               </ErrorBoundary>

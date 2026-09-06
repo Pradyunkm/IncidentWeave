@@ -1,3 +1,4 @@
+import React from 'react';
 import type { RTMClient } from 'agora-rtm';
 
 export interface AgoraTokenData {
@@ -43,4 +44,6 @@ export interface ConversationComponentProps {
   rtmClient: RTMClient;
   onTokenWillExpire: (uid: string) => Promise<AgoraRenewalTokens>;
   onEndConversation: () => void;
+  /** Ref supplied by the parent; MeetingRecorder writes its stop fn here */
+  recorderStopRef?: React.MutableRefObject<(() => void) | null>;
 }

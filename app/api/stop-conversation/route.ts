@@ -1,6 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { AgoraClient, Area } from 'agora-agents';
 import { StopConversationRequest } from '@/types/conversation';
+
+type StopConversationRequestWithChannel = StopConversationRequest & {
+  channel_name?: string;
+};
 
 function isAgentAlreadyStoppingOrStopped(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -22,10 +26,10 @@ function isAgentAlreadyStoppingOrStopped(error: unknown): boolean {
   return false;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const body: StopConversationRequest = await request.json();
-    const { agent_id } = body;
+    const body: StopConversationRequestWithChannel = await request.json();
+    const { agent_id, channel_name } = body;
 
     if (!agent_id) {
       return NextResponse.json(
@@ -56,6 +60,20 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, state: 'already-stopping' });
       }
       throw error;
+    }
+
+    // Clear Redis cache so the next session start creates a fresh agent
+    if (channel_name) {
+      try {
+        const { redis } = await import('@/lib/redis');
+        await Promise.all([
+          redis.del(`channel:${channel_name}:agent_id`),
+          redis.del(`channel:${channel_name}:remote_uids`),
+        ]);
+        console.log(`[stop-conversation] Cleared Redis cache for channel ${channel_name}`);
+      } catch {
+        // Redis is optional
+      }
     }
 
     return NextResponse.json({ success: true });

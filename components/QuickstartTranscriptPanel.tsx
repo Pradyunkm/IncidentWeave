@@ -13,6 +13,8 @@ type QuickstartTranscriptPanelProps = {
   messageList: TranscriptMessage[];
   currentInProgressMessage: TranscriptMessage | null;
   agentUID: string;
+  /** The local user's own RTC UID — used to label their turns as "You" */
+  localUID?: string;
 };
 
 function formatMessageTime(createdAt?: number) {
@@ -27,6 +29,7 @@ export function QuickstartTranscriptPanel({
   messageList,
   currentInProgressMessage,
   agentUID,
+  localUID,
 }: QuickstartTranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messages = useMemo(
@@ -65,8 +68,15 @@ export function QuickstartTranscriptPanel({
           </div>
         ) : (
           messages.map((message, index) => {
-            const isAgent = String(message.uid) === agentUID;
-            const label = isAgent ? 'Agent' : 'You';
+            const uidStr = String(message.uid);
+            const isAgent = uidStr === agentUID;
+            const isLocal = !isAgent && localUID && uidStr === localUID;
+            // Multi-party: show "You" for local, "User N" for other humans
+            const label = isAgent
+              ? 'Agent'
+              : isLocal
+                ? 'You'
+                : `User ${uidStr}`;
             const text = message.text?.trim();
             const time = formatMessageTime(message.createdAt);
 
@@ -83,7 +93,9 @@ export function QuickstartTranscriptPanel({
                   className={`max-w-full whitespace-pre-wrap rounded-xl border px-3 py-2 text-sm leading-6 ${
                     isAgent
                       ? 'border-[#2f2f2f] bg-[#212121] text-[#e7e7e7]'
-                      : 'border-[#d7d7d7] bg-[#fdfcfb] text-black'
+                      : isLocal
+                        ? 'border-[#d7d7d7] bg-[#fdfcfb] text-black'
+                        : 'border-blue-500/30 bg-blue-950/30 text-blue-100'
                   }`}
                 >
                   {text || '...'}
@@ -96,3 +108,4 @@ export function QuickstartTranscriptPanel({
     </section>
   );
 }
+

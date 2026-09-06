@@ -98,6 +98,36 @@ function requireEnv(name: string): string {
   return value.trim();
 }
 
+// Calls Agora's Conversational AI REST API to update the running agent's subscribe_audio_uids.
+// This is necessary when a new participant joins after the agent session was already created,
+// because remoteUids is frozen at createSession() time and the STT pipeline won't hear new UIDs.
+async function updateAgentRemoteUids({
+  appId,
+  appCertificate,
+  agentId,
+  uids,
+}: {
+  appId: string;
+  appCertificate: string;
+  agentId: string;
+  uids: string[];
+}): Promise<void> {
+  const auth = Buffer.from(`${appId}:${appCertificate}`).toString('base64');
+  const url = `https://api.agora.io/api/conversational-ai-agent/v2/projects/${appId}/agents/${agentId}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ subscribe_audio_uids: uids }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Agora update agent failed (${res.status}): ${body}`);
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     // --- 1. Parse request ---
@@ -228,14 +258,55 @@ export async function POST(request: NextRequest) {
         // }),
       );
 
-    // Check if an agent is already active for this channel
+    // Check if an agent is already active for this channel.
+    // If it is, update its subscribe_audio_uids with any new UIDs from this request
+    // so late-joining participants are heard by the agent's STT pipeline.
     try {
       const { redis } = await import('@/lib/redis');
-      const cached = await redis.get(`channel:${channel_name}:agent_id`);
-      if (cached && typeof cached === 'string') {
-        console.log(`[invite-agent] Reusing active agent ${cached} for channel ${channel_name}`);
+      const [cachedAgentId, cachedUidsRaw] = await Promise.all([
+        redis.get(`channel:${channel_name}:agent_id`),
+        redis.get(`channel:${channel_name}:remote_uids`),
+      ]);
+
+      if (cachedAgentId && typeof cachedAgentId === 'string') {
+        // Merge existing UIDs with the new ones from this request.
+        const existingUids: string[] = cachedUidsRaw
+          ? JSON.parse(cachedUidsRaw as string)
+          : [];
+        const merged = Array.from(new Set([...existingUids, ...remoteUidList]));
+        const hasNewUids = merged.length > existingUids.length;
+
+        if (hasNewUids) {
+          // New participant joined — update the running agent so it hears them.
+          try {
+            await updateAgentRemoteUids({
+              appId,
+              appCertificate,
+              agentId: cachedAgentId,
+              uids: merged,
+            });
+            await redis.set(
+              `channel:${channel_name}:remote_uids`,
+              JSON.stringify(merged),
+              { ex: 3600 },
+            );
+            console.log(
+              `[invite-agent] Updated remoteUids for agent ${cachedAgentId}:`,
+              merged,
+            );
+          } catch (updateErr) {
+            // Non-fatal: agent may not support update or may have already ended.
+            // Log but still return success so the client can proceed.
+            console.warn('[invite-agent] Failed to update remoteUids:', updateErr);
+          }
+        } else {
+          console.log(
+            `[invite-agent] Reusing active agent ${cachedAgentId} for channel ${channel_name} (no new UIDs)`,
+          );
+        }
+
         return NextResponse.json({
-          agent_id: cached,
+          agent_id: cachedAgentId,
           create_ts: Math.floor(Date.now() / 1000),
           state: 'RUNNING',
         } as AgentResponse);
@@ -260,7 +331,15 @@ export async function POST(request: NextRequest) {
       agentId = await session.start();
       try {
         const { redis } = await import('@/lib/redis');
-        await redis.set(`channel:${channel_name}:agent_id`, agentId, { ex: 3600 });
+        await Promise.all([
+          redis.set(`channel:${channel_name}:agent_id`, agentId, { ex: 3600 }),
+          // Persist the initial remoteUids so we can merge correctly on subsequent joins.
+          redis.set(
+            `channel:${channel_name}:remote_uids`,
+            JSON.stringify(remoteUidList),
+            { ex: 3600 },
+          ),
+        ]);
       } catch {}
     } catch (startErr) {
       const errMessage = String(startErr).toLowerCase();
