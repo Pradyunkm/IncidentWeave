@@ -145,14 +145,22 @@ export default function ConversationComponent({
     });
   }, [humanAudioTracks]);
 
+  // Incident ID for Redis room history
+  const incidentId = agoraData.incidentId ?? 'demo-001';
+
   // AI Agent audio tracks: strictly silenced until the user clicks the Speak button.
   const [isAgentSpeechAllowed, setIsAgentSpeechAllowed] = useState(false);
   const [isAgentPrompting, setIsAgentPrompting] = useState(false);
   // Transcript clear: any message with createdAt <= clearedBefore is hidden from the panel.
   const [clearedBefore, setClearedBefore] = useState<number>(0);
   const handleClearTranscript = useCallback(() => {
-    setClearedBefore(Date.now());
-  }, []);
+    setClearedBefore(Date.now() + 5000);
+    setSharedTranscripts({});
+    setRawTranscript([]);
+    fetch(`/api/incident/transcript?id=${encodeURIComponent(incidentId)}`, {
+      method: 'DELETE',
+    }).catch(() => {});
+  }, [incidentId]);
   const { audioTracks: agentAudioTracks } = useRemoteAudioTracks(agentRemoteUsers);
 
   useEffect(() => {
@@ -242,38 +250,40 @@ export default function ConversationComponent({
   const [agentState, setAgentState] = useState<AgentState | null>(null);
   const [agentMetrics, setAgentMetrics] = useState<QuickstartAgentMetric[]>([]);
 
-  // When the agent starts speaking (detected via state or in-progress transcript with spoken text),
-  // automatically allow agent audio and start the transcript for the agent.
+  // Record agent turns ONLY while agent voice is actively allowed by clicking Speak.
+  // Historical or silent agent turns remain suppressed.
   useEffect(() => {
-    const isSpeaking = agentState === AgentState.SPEAKING;
-    let agentSpoke = false;
-
+    if (!isAgentSpeechAllowed) return;
     rawTranscript.forEach((item) => {
       const uidStr = String(item.uid);
       const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
       if (isAgent && item.turn_id !== undefined && item.turn_id !== null) {
-        const clean = stripJsonFromText(typeof item.text === 'string' ? item.text : '');
-        if (clean.length > 0) {
-          if (item.status === TurnStatus.IN_PROGRESS || isSpeaking || isAgentSpeechAllowed) {
-            agentSpoke = true;
-            activatedAgentTurnIds.current.add(String(item.turn_id));
-          }
-        }
+        activatedAgentTurnIds.current.add(String(item.turn_id));
       }
     });
+  }, [rawTranscript, isAgentSpeechAllowed, agentUID]);
 
-    if (isSpeaking || agentSpoke) {
-      if (!isAgentSpeechAllowed) {
-        setIsAgentSpeechAllowed(true);
-      }
-      agentAudioTracks.forEach((track) => {
-        track.setVolume(100);
-        if (!track.isPlaying) {
-          track.play();
-        }
-      });
+  // When the AI finishes its spoken response, automatically silence audio and return to
+  // Silent Observer mode so it NEVER speaks spontaneously without clicking the button.
+  useEffect(() => {
+    if (!isAgentSpeechAllowed) return;
+    if (
+      agentState === AgentState.IDLE ||
+      agentState === AgentState.LISTENING ||
+      agentState === AgentState.SILENT
+    ) {
+      const timer = setTimeout(() => {
+        setIsAgentSpeechAllowed(false);
+        agentAudioTracks.forEach((track) => {
+          track.setVolume(0);
+          if (track.isPlaying) {
+            track.stop();
+          }
+        });
+      }, 1500);
+      return () => clearTimeout(timer);
     }
-  }, [rawTranscript, agentState, isAgentSpeechAllowed, agentAudioTracks, agentUID]);
+  }, [agentState, isAgentSpeechAllowed, agentAudioTracks]);
 
   // Shared common transcript turns from remote participants + hydrated from Redis
   const [sharedTranscripts, setSharedTranscripts] = useState<Record<string, IMessageListItem>>({});
@@ -624,8 +634,6 @@ export default function ConversationComponent({
     return null;
   }
 
-  const incidentId = agoraData.incidentId ?? 'demo-001';
-
   // Register self into room roster when joined
   useEffect(() => {
     if (joinSuccess && agoraData.uid) {
@@ -958,9 +966,8 @@ export default function ConversationComponent({
 
       if (isAgent) {
         const wasActivated = activatedAgentTurnIds.current.has(String(item.turn_id));
-        const isSpeakingState = agentState === AgentState.SPEAKING;
-        if (!wasActivated && !isAgentSpeechAllowed && !isSpeakingState) {
-          return; // Agent turn was silent / not triggered: suppress
+        if (!wasActivated) {
+          return; // Agent turn was silent / not triggered: strictly suppress
         }
         const cleanText = stripJsonFromText(item.text || '');
         if (!cleanText) return;
@@ -981,7 +988,7 @@ export default function ConversationComponent({
       if (timeA !== timeB) return timeA - timeB;
       return String(a.turn_id).localeCompare(String(b.turn_id));
     });
-  }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed, agentState]);
+  }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed]);
 
   const currentInProgressMessage = useMemo<IMessageListItem | null>(() => {
     // The live partial turn renders separately from the completed history list.
@@ -1005,9 +1012,12 @@ export default function ConversationComponent({
       uidStr === String(DEFAULT_AGENT_UID);
 
     if (isAgent) {
+      // Only show in-progress agent bubble when user explicitly clicked Speak
+      if (!isAgentSpeechAllowed) {
+        return null;
+      }
       const cleanText = stripJsonFromText(activeItem.text || '');
       if (!cleanText) return null;
-      // When agent starts speaking, start the transcript for the agent immediately
       if (activeItem.turn_id !== undefined && activeItem.turn_id !== null) {
         activatedAgentTurnIds.current.add(String(activeItem.turn_id));
       }
@@ -1016,7 +1026,7 @@ export default function ConversationComponent({
 
     // Human speaking turn: ALWAYS SHOW!
     return activeItem;
-  }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed, agentState]);
+  }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed]);
 
   // Publish local mic once the track exists; usePublish waits for RTC connection.
   usePublish([localMicrophoneTrack]);

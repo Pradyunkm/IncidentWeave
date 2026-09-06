@@ -67,3 +67,16 @@ export async function GET(req) {
     return NextResponse.json({ transcripts: [] })
   }
 }
+
+// DELETE /api/incident/transcript?id=<incidentId>
+export async function DELETE(req) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const incidentId = searchParams.get('id') || 'default'
+    await redis.del(`incident:${incidentId}:transcripts`)
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    console.error('[api/incident/transcript] DELETE failed:', err)
+    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
+  }
+}

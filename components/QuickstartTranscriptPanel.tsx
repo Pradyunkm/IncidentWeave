@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { stripJsonFromText } from '@/lib/conversation';
 
 export type TranscriptMessage = {
@@ -56,6 +56,8 @@ export function QuickstartTranscriptPanel({
   onClear,
 }: QuickstartTranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
+
   const messages = useMemo(
     () =>
       currentInProgressMessage
@@ -64,11 +66,27 @@ export function QuickstartTranscriptPanel({
     [currentInProgressMessage, messageList],
   );
 
+  const visibleMessages = useMemo(() => {
+    return messages.filter((m, idx) => {
+      const turnKey = String(m.turn_id ?? `${m.uid}_${idx}`);
+      return !clearedIds.has(turnKey);
+    });
+  }, [messages, clearedIds]);
+
+  const handleClear = () => {
+    const ids = new Set<string>(clearedIds);
+    messages.forEach((m, idx) => {
+      ids.add(String(m.turn_id ?? `${m.uid}_${idx}`));
+    });
+    setClearedIds(ids);
+    onClear?.();
+  };
+
   useEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [messages]);
+  }, [visibleMessages]);
 
   return (
     <section
@@ -84,11 +102,11 @@ export function QuickstartTranscriptPanel({
           <p className="text-[11px] text-muted-foreground">Shared live voice turns for all participants</p>
         </div>
         <div className="flex items-center gap-2">
-          {messages.length > 0 && onClear && (
+          {visibleMessages.length > 0 && onClear && (
             <button
-              onClick={onClear}
+              onClick={handleClear}
               title="Clear transcript"
-              className="flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-semibold text-red-400 hover:bg-red-500/20 hover:border-red-500/40 hover:text-red-300 transition-all active:scale-95"
+              className="flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-semibold text-red-400 hover:bg-red-500/20 hover:border-red-500/40 hover:text-red-300 transition-all active:scale-95 cursor-pointer"
             >
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6" />
@@ -100,7 +118,7 @@ export function QuickstartTranscriptPanel({
             </button>
           )}
           <span className="rounded-full bg-white/5 border border-white/10 px-2 py-0.5 text-[10px] font-medium text-white/50">
-            {messages.length} {messages.length === 1 ? 'turn' : 'turns'}
+            {visibleMessages.length} {visibleMessages.length === 1 ? 'turn' : 'turns'}
           </span>
         </div>
       </div>
@@ -109,7 +127,7 @@ export function QuickstartTranscriptPanel({
         ref={scrollRef}
         className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 py-4"
       >
-        {messages.length === 0 ? (
+        {visibleMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground gap-2">
             <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z" />
@@ -118,7 +136,7 @@ export function QuickstartTranscriptPanel({
             <p className="text-xs text-white/30">Turns are broadcast to everyone in the room with speaker names.</p>
           </div>
         ) : (
-          messages.map((message, index) => {
+          visibleMessages.map((message, index) => {
             const uidStr = String(message.uid);
             const isAgent =
               Boolean(message.isAgent) ||
