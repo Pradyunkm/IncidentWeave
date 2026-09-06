@@ -311,10 +311,12 @@ Built on Agora Conversational AI
 
 ### Slide 7 — Key Differentiators
 1. **Multi-party**: Agent hears all participants, not just one
-2. **Reliable contradiction detection**: seq-based graph edges, not fuzzy text
+2. **Topic-aware contradiction detection**: topic fingerprinting (CPU%, HTTP codes, database, network) + disagreement language — no false positives
 3. **Real speaker attribution**: actual Agora UID → name/role, not LLM guess
-4. **Human-in-the-loop**: nothing fires until a human clicks Approve
-5. **Three real integrations**: Jira + Slack + PagerDuty
+4. **Interactive Truth Graph**: rich nodes, two edge types, mini-map, click-to-inspect — not just a static diagram
+5. **Human-in-the-loop**: nothing fires until a human clicks Approve
+6. **Three real integrations**: Jira + Slack + PagerDuty
+7. **Downloadable report**: one-click Markdown export with full timeline
 
 ### Slide 8 — Built to Grow
 - Silence Governor (flag dead air > N minutes)
@@ -411,7 +413,9 @@ Open http://localhost:3000/dashboard in a third tab to see the live intelligence
 | Claim extraction pipeline | `parseClaimFromAgentResponse` → `/api/incident/claim` |
 | Seq-based conflict linking | Redis `INCR` seq + `conflicts_with_seq` in TruthGraph |
 | Shared roster | `/api/incident/roster` + HGETALL in state route |
-| Truth Graph | ReactFlow with animated contradiction edges |
+| Truth Graph — interactive | ReactFlow: rich node cards (speaker, role, confidence bar), animated CONTRADICTS edges, relates-to edges, mini-map, click-to-inspect panel, auto-layout by claim type |
+| Topic-aware contradiction detection | Topic fingerprinting (CPU%, HTTP, database, network) + explicit disagreement markers — eliminates false positives |
+| Downloadable Incident Report | `.md` file download from dashboard Report modal; structured with facts, hypotheses, contradictions, timeline |
 | Incident Timeline | Chronological strip, T+mm:ss, type-colored |
 | Action Approval Gate | Approve/Reject with loading state |
 | Staleness indicator | 10-min threshold, orange badge, "Awaiting owner" |

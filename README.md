@@ -8,14 +8,16 @@
 > **Live Deployment:** [https://incidentweave-live.vercel.app](https://incidentweave-live.vercel.app)  
 > **GitHub Repository:** [https://github.com/Pradyunkm/IncidentWeave](https://github.com/Pradyunkm/IncidentWeave)
 
-**IncidentWeave** turns chaotic multi-person incident calls into structured, actionable intelligence in real time. It features a **common multi-party voice transcript** with real speaker attribution, live AI claim extraction, automated contradiction detection, a dynamic Truth Graph, and approval gates for Jira, Slack, and PagerDuty.
+**IncidentWeave** turns chaotic multi-person incident calls into structured, actionable intelligence in real time. It features a **common multi-party voice transcript** with real speaker attribution, live AI claim extraction, automated topic-aware contradiction detection, a fully interactive Truth Graph, and approval gates for Jira, Slack, and PagerDuty.
 
 ## Key Capabilities
 
-- 🎙️ **Common Multi-Party Transcript**: When anyone speaks in the room, their speech is instantly broadcast over Agora RTM to all participants with their actual name, role, and timestamp.
+- 🎙️ **Common Multi-Party Transcript**: When anyone speaks in the room, their speech is instantly broadcast over Agora RTM to all participants with their actual name, role, and timestamp. Agent turns only appear when explicitly activated — silent agent turns are strictly suppressed.
 - 🤖 **AI Incident Commander**: Listens to everyone simultaneously via Deepgram STT, GPT-4o-mini, and MiniMax TTS.
-- ⚡ **Truth Graph**: Real-time ReactFlow graph visualizing facts, hypotheses, and contradictions between speakers.
-- 🛡️ **Action Gate**: Human-in-the-loop approval before firing actions to Slack, Jira, or PagerDuty.
+- ⚡ **Interactive Truth Graph**: Full ReactFlow graph with rich node cards (speaker, role, confidence bar), animated **CONTRADICTS** edges (seq-matched), **relates to** edges linking hypotheses to facts, mini-map, zoom controls, and a click-to-inspect detail panel — all auto-updating as participants speak.
+- 🛡️ **Action Gate**: Human-in-the-loop approval before firing actions to Slack, Jira, or PagerDuty. Actions show owner name, role, and staleness badge (>10 min).
+- 📊 **Topic-aware Contradiction Detection**: Contradictions are detected using topic fingerprinting (CPU%, HTTP codes, database, network, etc.) + explicit disagreement language — eliminating false positives.
+- 📥 **Downloadable Incident Report**: One-click export of a structured Markdown report covering facts, hypotheses, contradictions, actions, and chronological timeline.
 - 💬 **Live Meeting Chat & Audio Recorder**: Full in-call text chat, DM channels, and dual-track meeting audio recorder.
 
 ## Prerequisites
