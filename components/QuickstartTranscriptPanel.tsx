@@ -124,23 +124,37 @@ export function QuickstartTranscriptPanel({
               Boolean(message.isAgent) ||
               uidStr === agentUID ||
               uidStr === '100';
-            const isLocal = !isAgent && Boolean(localUID && uidStr === localUID);
 
-            // Resolve speaker name:
-            // 1. Explicit speakerName attached to message
-            // 2. Roster entry lookup by UID
-            // 3. Local user's currentUserName if local
-            // 4. Fallback to User <UID>
-            const resolvedName =
-              message.speakerName ||
-              roster[uidStr]?.name ||
-              (isLocal && currentUserName ? currentUserName : undefined) ||
-              (isAgent ? 'IncidentWeave AI' : `User ${uidStr}`);
+            // Match speaker: local user check by UID or case-insensitive name match
+            const cleanSpeakerName = (message.speakerName || '').trim();
+            const cleanCurrentName = (currentUserName || '').trim();
+            const isNameMatch = Boolean(
+              cleanCurrentName &&
+              cleanSpeakerName &&
+              cleanSpeakerName.toLowerCase() === cleanCurrentName.toLowerCase()
+            );
+            const isUidMatch = Boolean(
+              localUID && (uidStr === localUID || uidStr === '0')
+            );
+            const isLocal = !isAgent && (isUidMatch || isNameMatch);
 
-            const resolvedRole =
-              message.speakerRole ||
-              roster[uidStr]?.role ||
-              (isAgent ? 'AI Incident Commander' : '');
+            // Match against roster if remote
+            const matchingRosterUser = Object.values(roster).find(
+              (p) => p.name && cleanSpeakerName && p.name.trim().toLowerCase() === cleanSpeakerName.toLowerCase()
+            );
+
+            // Canonical speaker name and role:
+            const resolvedName = isAgent
+              ? 'IncidentWeave AI'
+              : isLocal && cleanCurrentName
+                ? cleanCurrentName
+                : (matchingRosterUser?.name || message.speakerName || roster[uidStr]?.name || `User ${uidStr}`);
+
+            const resolvedRole = isAgent
+              ? 'AI Incident Commander'
+              : isLocal
+                ? (message.speakerRole || roster[uidStr]?.role || 'Engineer')
+                : (matchingRosterUser?.role || roster[uidStr]?.role || message.speakerRole || '');
 
             const displayName = isAgent
               ? 'IncidentWeave AI'

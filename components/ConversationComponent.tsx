@@ -879,18 +879,41 @@ export default function ConversationComponent({
 
     // 1. Seed with shared/remote/hydrated transcripts
     Object.values(sharedTranscripts).forEach((item) => {
-      map.set(String(item.turn_id), { ...item });
+      const isAgent =
+        String(item.uid) === agentUID ||
+        String(item.uid) === String(DEFAULT_AGENT_UID) ||
+        Boolean(item.isAgent);
+      const cleanSpeaker = (item.speakerName || '').trim().toLowerCase();
+      const cleanCurrent = (agoraData.participantName || '').trim().toLowerCase();
+      const isCurrentUserName = Boolean(cleanCurrent && cleanSpeaker && cleanSpeaker === cleanCurrent);
+
+      map.set(String(item.turn_id), {
+        ...item,
+        isAgent,
+        speakerName: isAgent
+          ? 'IncidentWeave AI'
+          : isCurrentUserName && agoraData.participantName
+            ? agoraData.participantName
+            : (item.speakerName || `User ${item.uid}`),
+        speakerRole: isAgent
+          ? 'AI Incident Commander'
+          : isCurrentUserName && agoraData.participantRole
+            ? agoraData.participantRole
+            : (item.speakerRole || ''),
+      });
     });
 
     // 2. Overlay normalized local turns from AgoraVoiceAI
     // Local turns take precedence for local user turns and agent turns
     transcript.forEach((item) => {
       const turnIdStr = String(item.turn_id);
+      const existing = map.get(turnIdStr);
       const uidStr = String(item.uid);
       const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
-      const isLocal = !isAgent && (item.uid === '0' || uidStr === String(client?.uid));
-
-      const existing = map.get(turnIdStr);
+      const cleanSpeaker = (existing?.speakerName || '').trim().toLowerCase();
+      const cleanCurrent = (agoraData.participantName || '').trim().toLowerCase();
+      const isCurrentUserName = Boolean(cleanCurrent && cleanSpeaker && cleanSpeaker === cleanCurrent);
+      const isLocal = !isAgent && (item.uid === '0' || uidStr === String(client?.uid) || isCurrentUserName);
       map.set(turnIdStr, {
         turn_id: item.turn_id,
         uid: isLocal ? String(client?.uid) : isAgent ? agentUID : uidStr,
