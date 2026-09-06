@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
+import { stripJsonFromText } from '@/lib/conversation';
 
 export type TranscriptMessage = {
   turn_id?: string | number;
@@ -127,7 +128,9 @@ export function QuickstartTranscriptPanel({
                 ? `${resolvedName} (You)`
                 : resolvedName;
 
-            const text = message.text?.trim();
+            const rawText = message.text?.trim();
+            const text = isAgent ? stripJsonFromText(rawText || '') : rawText;
+            if (isAgent && !text) return null;
             const time = formatMessageTime(message.createdAt);
             const isPartial = message === currentInProgressMessage;
             const initials = isAgent ? 'AI' : getInitials(resolvedName);

@@ -30,6 +30,16 @@ export function normalizeTranscriptSpacing(text: string): string {
     .trim();
 }
 
+// Strips raw JSON claim objects and fenced markdown code blocks from agent response text
+// so only clean conversational and summary words appear in the transcript UI.
+export function stripJsonFromText(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/```(?:json)?[\s\S]*?```/g, '')
+    .replace(/\{[\s\S]*?"type"\s*:\s*"[^"]*"[\s\S]*?\}/g, '')
+    .trim();
+}
+
 // Agora timestamps vary by source: some RTM payloads use Unix-seconds while
 // RTC events use milliseconds. Values already above 1e12 are milliseconds; others need scaling.
 export function normalizeTimestampMs(timestamp: number): number {

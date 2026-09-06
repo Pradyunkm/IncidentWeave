@@ -379,6 +379,11 @@ function LiveTranscriptsPanel({ transcripts, onAnalyze, isAnalyzing }) {
             const isAgent = Boolean(t.isAgent) || String(t.uid) === '100'
             const speakerName = t.speakerName || (isAgent ? 'IncidentWeave AI' : `User ${t.uid}`)
             const role = t.speakerRole || ''
+            const cleanText = (t.text || '')
+              .replace(/```(?:json)?[\s\S]*?```/g, '')
+              .replace(/\{[\s\S]*?"type"\s*:\s*"[^"]*"[\s\S]*?\}/g, '')
+              .trim()
+            if (isAgent && !cleanText) return null
             return (
               <div
                 key={`${t.turn_id ?? idx}`}
@@ -392,7 +397,7 @@ function LiveTranscriptsPanel({ transcripts, onAnalyze, isAnalyzing }) {
                   </span>
                   <span>{formatMessageTime(t.createdAt)}</span>
                 </div>
-                <p className="text-white/80">{t.text}</p>
+                <p className="text-white/80">{cleanText || t.text}</p>
               </div>
             )
           })}

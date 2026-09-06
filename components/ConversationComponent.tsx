@@ -34,6 +34,7 @@ import {
   normalizeTimestampMs,
   normalizeTranscript,
   normalizeTranscriptSpacing,
+  stripJsonFromText,
   type IMessageListItem,
 } from '@/lib/conversation';
 import { MicrophoneSelector } from './MicrophoneSelector';
@@ -210,6 +211,10 @@ export default function ConversationComponent({
     } catch {}
   }, [agentAudioTracks, agentUID]);
 
+  // Tracks turn IDs of agent responses that were explicitly activated by the user clicking "Ask AI to Speak".
+  // Only activated agent turns are shown in the shared transcript. Silent agent turns are suppressed.
+  const activatedAgentTurnIds = useRef<Set<string>>(new Set());
+
   const [isEnabled, setIsEnabled] = useState(true);
   const [isAgentConnected, setIsAgentConnected] = useState(false);
   const [isConnectionDetailsOpen, setIsConnectionDetailsOpen] = useState(false);
@@ -231,6 +236,19 @@ export default function ConversationComponent({
   >([]);
   const [agentState, setAgentState] = useState<AgentState | null>(null);
   const [agentMetrics, setAgentMetrics] = useState<QuickstartAgentMetric[]>([]);
+
+  // Record agent turns that occur while agent voice is activated
+  useEffect(() => {
+    if (isAgentSpeechAllowed) {
+      rawTranscript.forEach((item) => {
+        const uidStr = String(item.uid);
+        const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
+        if (isAgent && item.turn_id !== undefined && item.turn_id !== null) {
+          activatedAgentTurnIds.current.add(String(item.turn_id));
+        }
+      });
+    }
+  }, [rawTranscript, isAgentSpeechAllowed, agentUID]);
 
   // Shared common transcript turns from remote participants + hydrated from Redis
   const [sharedTranscripts, setSharedTranscripts] = useState<Record<string, IMessageListItem>>({});
@@ -745,29 +763,35 @@ export default function ConversationComponent({
           }).catch(() => {});
         }
       } else if (isAgentTurn) {
-        // When AI agent turn completes, persist it to Redis for late joiners
+        // When AI agent turn completes, ONLY persist it to Redis if it was an activated turn
+        // Never pollute room history with silent/background agent turns!
+        const wasActivated = activatedAgentTurnIds.current.has(turnIdStr);
         if (
+          wasActivated &&
           (item.status === TurnStatus.END || item.status === TurnStatus.INTERRUPTED) &&
           !savedTranscriptTurnIds.current.has(turnIdStr)
         ) {
-          savedTranscriptTurnIds.current.add(turnIdStr);
-          fetch('/api/incident/transcript', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              incidentId,
-              item: {
-                turn_id: item.turn_id,
-                uid: agentUID,
-                speakerName: 'IncidentWeave AI',
-                speakerRole: 'AI Incident Commander',
-                text: normalizeTranscriptSpacing(text),
-                status: item.status,
-                createdAt: normalizeTimestampMs(item._time || Date.now()),
-                isAgent: true,
-              },
-            }),
-          }).catch(() => {});
+          const cleanText = stripJsonFromText(text);
+          if (cleanText) {
+            savedTranscriptTurnIds.current.add(turnIdStr);
+            fetch('/api/incident/transcript', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                incidentId,
+                item: {
+                  turn_id: item.turn_id,
+                  uid: agentUID,
+                  speakerName: 'IncidentWeave AI',
+                  speakerRole: 'AI Incident Commander',
+                  text: normalizeTranscriptSpacing(cleanText),
+                  status: item.status,
+                  createdAt: normalizeTimestampMs(item._time || Date.now()),
+                  isAgent: true,
+                },
+              }),
+            }).catch(() => {});
+          }
         }
       }
     });
@@ -867,15 +891,41 @@ export default function ConversationComponent({
   }, [sharedTranscripts, transcript, client?.uid, agentUID, agoraData, roster]);
 
   // Completed (END + INTERRUPTED) messages shown as history.
-  // INTERRUPTED must be included — if the agent's first turn is cut off,
-  // messageList stays empty and the first interrupted turn is never shown.
+  // 1. Human turns (local and remote) ALWAYS show when anyone speaks.
+  // 2. Agent turns ONLY show when the agent was activated by clicking "Ask AI to Speak".
+  // When agent is silent, its turns are completely suppressed from the transcript.
   const messageList = useMemo<IMessageListItem[]>(() => {
     const list: IMessageListItem[] = [];
     unifiedTranscriptMap.forEach((item) => {
-      if (item.status !== TurnStatus.IN_PROGRESS && item.text?.trim()) {
+      if (item.status === TurnStatus.IN_PROGRESS) return;
+
+      const uidStr = String(item.uid);
+      const isAgent =
+        Boolean(item.isAgent) ||
+        uidStr === agentUID ||
+        uidStr === String(DEFAULT_AGENT_UID);
+
+      if (isAgent) {
+        // Agent was silent / not activated -> DO NOT SHOW
+        const wasActivated =
+          activatedAgentTurnIds.current.has(String(item.turn_id)) || isAgentSpeechAllowed;
+        if (wasActivated) {
+          activatedAgentTurnIds.current.add(String(item.turn_id));
+        } else {
+          return; // Agent is silent: suppress completely from transcript!
+        }
+        const cleanText = stripJsonFromText(item.text || '');
+        if (!cleanText) return;
+        list.push({ ...item, text: cleanText });
+        return;
+      }
+
+      // Human speaker: ALWAYS SHOW in the shared transcript!
+      if (item.text?.trim()) {
         list.push(item);
       }
     });
+
     // Sort strictly chronologically
     return list.sort((a, b) => {
       const timeA = a.createdAt ?? 0;
@@ -883,20 +933,42 @@ export default function ConversationComponent({
       if (timeA !== timeB) return timeA - timeB;
       return String(a.turn_id).localeCompare(String(b.turn_id));
     });
-  }, [unifiedTranscriptMap]);
+  }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed]);
 
   const currentInProgressMessage = useMemo<IMessageListItem | null>(() => {
     // The live partial turn renders separately from the completed history list.
-    let activeItem: IMessageListItem | null = null;
+    const inProgressItems: IMessageListItem[] = [];
     unifiedTranscriptMap.forEach((item) => {
       if (item.status === TurnStatus.IN_PROGRESS && item.text?.trim()) {
-        if (!activeItem || (item.createdAt ?? 0) >= (activeItem.createdAt ?? 0)) {
-          activeItem = item;
-        }
+        inProgressItems.push(item);
       }
     });
+
+    if (inProgressItems.length === 0) return null;
+
+    const activeItem = inProgressItems.reduce((latest, item) =>
+      (item.createdAt ?? 0) >= (latest.createdAt ?? 0) ? item : latest,
+    );
+
+    const uidStr = String(activeItem.uid);
+    const isAgent =
+      Boolean(activeItem.isAgent) ||
+      uidStr === agentUID ||
+      uidStr === String(DEFAULT_AGENT_UID);
+
+    if (isAgent) {
+      // If agent is silent, suppress in-progress agent bubble completely!
+      if (!isAgentSpeechAllowed) {
+        return null;
+      }
+      const cleanText = stripJsonFromText(activeItem.text || '');
+      if (!cleanText) return null;
+      return { ...activeItem, text: cleanText };
+    }
+
+    // Human speaking turn: ALWAYS SHOW!
     return activeItem;
-  }, [unifiedTranscriptMap]);
+  }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed]);
 
   // Publish local mic once the track exists; usePublish waits for RTC connection.
   usePublish([localMicrophoneTrack]);
