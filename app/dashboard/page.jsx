@@ -893,13 +893,7 @@ export default function IncidentDashboard() {
             </span>
           </div>
           {claims.length === 0 ? (
-            <div className="h-52 flex flex-col items-center justify-center gap-2 text-white/25 text-center px-4">
-              <GitBranch size={28} className="opacity-40" />
-              <p className="text-sm font-medium">Start speaking in the incident room to see claims graphed here</p>
-              <p className="text-xs text-white/35 max-w-md">
-                Claims, hypotheses, and contradictory statements link automatically as participants discuss the outage.
-              </p>
-            </div>
+            <TruthGraph claims={[]} />
           ) : (
             <TruthGraph claims={claims} />
           )}
