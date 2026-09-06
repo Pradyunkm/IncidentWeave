@@ -268,27 +268,26 @@ function ActionsPanel({
       </span>
     ) : null
 
-  const headerActions =
-    pendingActions.length > 0 ? (
-      <div className="flex items-center gap-1.5">
-        <button
-          onClick={onRejectAll}
-          disabled={isBatchApproving}
-          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-          title="Reject all pending actions"
-        >
-          <XCircle size={11} /> Reject All
-        </button>
-        <button
-          onClick={onApproveAll}
-          disabled={isBatchApproving}
-          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 shadow-sm"
-          title="Approve all pending actions"
-        >
-          <CheckCircle size={11} /> {isBatchApproving ? 'Approving…' : 'Approve All'}
-        </button>
-      </div>
-    ) : null
+  const headerActions = (
+    <div className="flex items-center gap-1.5">
+      <button
+        onClick={onRejectAll}
+        disabled={isBatchApproving || pendingActions.length === 0}
+        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+        title={pendingActions.length === 0 ? 'No actions to reject' : 'Reject all pending actions'}
+      >
+        <XCircle size={11} /> Reject All
+      </button>
+      <button
+        onClick={onApproveAll}
+        disabled={isBatchApproving || pendingActions.length === 0}
+        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+        title={pendingActions.length === 0 ? 'No actions to approve' : 'Approve all pending actions'}
+      >
+        <CheckCircle size={11} /> {isBatchApproving ? 'Approving…' : 'Approve All'}
+      </button>
+    </div>
+  )
 
   return (
     <Panel title="⚠ Action Approval Gate" icon={CheckCircle} badge={badge} action={headerActions} className="min-h-0">
@@ -300,21 +299,29 @@ function ActionsPanel({
       )}
 
       <div className="px-3 py-3 space-y-3 max-h-[380px] overflow-y-auto">
-        {pendingActions.length > 1 && (
-          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-xs">
-            <span className="text-white/70 font-medium">Batch Operations ({pendingActions.length} pending)</span>
+        {pendingActions.length > 0 && (
+          <div className="flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/30 text-xs shadow-sm">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+              <span className="text-amber-200 font-bold tracking-wide">
+                {pendingActions.length} Pending Action{pendingActions.length > 1 ? 's' : ''}
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={onRejectAll}
                 disabled={isBatchApproving}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border border-red-500/40 text-red-300 hover:bg-red-500/20 hover:border-red-400 transition-all disabled:opacity-40 cursor-pointer"
               >
                 <XCircle size={12} /> Reject All
               </button>
               <button
                 onClick={onApproveAll}
                 disabled={isBatchApproving}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 shadow-sm"
+                className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-40 shadow-md cursor-pointer"
               >
                 <CheckCircle size={12} /> {isBatchApproving ? 'Approving…' : 'Approve All'}
               </button>
@@ -838,10 +845,28 @@ export default function IncidentDashboard() {
         <span className={`text-xs font-bold rounded-md px-2.5 py-1 border ${sev.bg} ${sev.color}`}>{sev.label}</span>
 
         {pendingCount > 0 && (
-          <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-400 border border-amber-500/30 bg-amber-500/10 rounded-md px-2.5 py-1 animate-pulse">
-            <AlertTriangle size={12} />
-            {pendingCount} action{pendingCount > 1 ? 's' : ''} awaiting approval
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-400 border border-amber-500/30 bg-amber-500/10 rounded-md px-2.5 py-1 animate-pulse">
+              <AlertTriangle size={12} />
+              {pendingCount} action{pendingCount > 1 ? 's' : ''} awaiting approval
+            </span>
+            <button
+              onClick={handleRejectAll}
+              disabled={isBatchApproving}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-all disabled:opacity-50 cursor-pointer"
+              title="Reject all pending actions"
+            >
+              <XCircle size={12} /> Reject All
+            </button>
+            <button
+              onClick={handleApproveAll}
+              disabled={isBatchApproving}
+              className="flex items-center gap-1 px-3 py-1 rounded-md text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50 shadow-md cursor-pointer"
+              title="Approve all pending actions across Jira, Slack & PagerDuty"
+            >
+              <CheckCircle size={12} /> {isBatchApproving ? 'Approving…' : 'Approve All'}
+            </button>
+          </div>
         )}
 
         {/* Action Controls */}
