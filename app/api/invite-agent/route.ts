@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
 
     if (!channel_name || remoteUidList.length === 0) {
       return NextResponse.json(
-        { error: 'channel_name and at least one requester_id are required' },
+        { error: 'channel_name and requester_id are required' },
         { status: 400 },
       );
     }

@@ -368,7 +368,7 @@ function ActionsPanel({
                     </span>
                   </div>
                   <p className="text-sm text-white/90 mt-1 leading-snug">{action.task}</p>
-                  {action.claim && <p className="text-xs text-white/25 mt-0.5 italic line-clamp-1">"{action.claim}"</p>}
+                  {action.claim && <p className="text-xs text-white/25 mt-0.5 italic line-clamp-1">&quot;{action.claim}&quot;</p>}
                 </div>
               </div>
               <div className="flex gap-2 justify-end">

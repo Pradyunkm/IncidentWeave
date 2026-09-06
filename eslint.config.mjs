@@ -5,6 +5,7 @@ import tseslint from 'typescript-eslint';
 const config = [
   ...coreWebVitals,
   {
+    files: ['**/*.{js,jsx,mjs,ts,tsx,mts,cts}'],
     plugins: {
       '@typescript-eslint': tseslint.plugin,
     },
@@ -15,6 +16,9 @@ const config = [
       // initial-value and derived-state patterns that eslint-config-next 16 now flags as errors.
       'react-hooks/set-state-in-effect': 'off',
       'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/refs': 'warn',
+      'react-hooks/purity': 'warn',
+      'react-hooks/static-components': 'warn',
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': [
         'warn',
