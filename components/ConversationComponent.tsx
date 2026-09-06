@@ -148,6 +148,11 @@ export default function ConversationComponent({
   // AI Agent audio tracks: strictly silenced until the user clicks the Speak button.
   const [isAgentSpeechAllowed, setIsAgentSpeechAllowed] = useState(false);
   const [isAgentPrompting, setIsAgentPrompting] = useState(false);
+  // Transcript clear: any message with createdAt <= clearedBefore is hidden from the panel.
+  const [clearedBefore, setClearedBefore] = useState<number>(0);
+  const handleClearTranscript = useCallback(() => {
+    setClearedBefore(Date.now());
+  }, []);
   const { audioTracks: agentAudioTracks } = useRemoteAudioTracks(agentRemoteUsers);
 
   useEffect(() => {
@@ -1178,12 +1183,18 @@ export default function ConversationComponent({
         pipelineMetrics={<QuickstartPipelineMetrics metrics={agentMetrics} />}
         transcriptPanel={
           <QuickstartTranscriptPanel
-            messageList={messageList}
-            currentInProgressMessage={currentInProgressMessage}
+            messageList={clearedBefore > 0 ? messageList.filter(m => (m.createdAt ?? 0) > clearedBefore) : messageList}
+            currentInProgressMessage={
+              currentInProgressMessage &&
+              (clearedBefore === 0 || (currentInProgressMessage.createdAt ?? Date.now()) > clearedBefore)
+                ? currentInProgressMessage
+                : null
+            }
             agentUID={agentUID}
             localUID={String(client.uid)}
             roster={roster}
             currentUserName={agoraData.participantName}
+            onClear={handleClearTranscript}
           />
         }
         visualizer={

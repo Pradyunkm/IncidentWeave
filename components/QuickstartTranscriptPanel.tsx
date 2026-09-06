@@ -24,6 +24,8 @@ type QuickstartTranscriptPanelProps = {
   roster?: Record<string, { uid: string; name: string; role: string }>;
   /** Current participant's display name */
   currentUserName?: string;
+  /** Optional callback to clear the transcript */
+  onClear?: () => void;
 };
 
 function formatMessageTime(createdAt?: number) {
@@ -51,6 +53,7 @@ export function QuickstartTranscriptPanel({
   localUID,
   roster = {},
   currentUserName,
+  onClear,
 }: QuickstartTranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messages = useMemo(
@@ -80,9 +83,26 @@ export function QuickstartTranscriptPanel({
           </div>
           <p className="text-[11px] text-muted-foreground">Shared live voice turns for all participants</p>
         </div>
-        <span className="rounded-full bg-white/5 border border-white/10 px-2 py-0.5 text-[10px] font-medium text-white/50">
-          {messages.length} {messages.length === 1 ? 'turn' : 'turns'}
-        </span>
+        <div className="flex items-center gap-2">
+          {messages.length > 0 && onClear && (
+            <button
+              onClick={onClear}
+              title="Clear transcript"
+              className="flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-semibold text-red-400 hover:bg-red-500/20 hover:border-red-500/40 hover:text-red-300 transition-all active:scale-95"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14H6L5 6" />
+                <path d="M10 11v6M14 11v6" />
+                <path d="M9 6V4h6v2" />
+              </svg>
+              Clear
+            </button>
+          )}
+          <span className="rounded-full bg-white/5 border border-white/10 px-2 py-0.5 text-[10px] font-medium text-white/50">
+            {messages.length} {messages.length === 1 ? 'turn' : 'turns'}
+          </span>
+        </div>
       </div>
 
       <div
