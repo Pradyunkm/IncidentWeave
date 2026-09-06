@@ -243,6 +243,78 @@ export default function ConversationComponent({
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [roster, setRoster] = useState<Record<string, { uid: string; name: string; role: string }>>({});
 
+  // Audio volume indicator tracking to determine which human participant is actively speaking.
+  // - uid 0 (or client.uid): local microphone track
+  // - uid > 0: remote participant's UID
+  const lastActiveSpeakerRef = useRef<{
+    uid: string;
+    name: string;
+    role: string;
+    isLocal: boolean;
+    timestamp: number;
+  }>({
+    uid: String(client?.uid || 0),
+    name: agoraData.participantName || '',
+    role: agoraData.participantRole || 'Engineer',
+    isLocal: true,
+    timestamp: 0,
+  });
+
+  // Persistent map of turn_id -> SpeakerInfo so each turn retains its speaker identity
+  const turnSpeakerMap = useRef<Record<string, {
+    uid: string;
+    name: string;
+    role: string;
+    isLocal: boolean;
+  }>>({});
+
+  // Active speaker volume indicator listener
+  useEffect(() => {
+    if (!client) return;
+    try {
+      client.enableAudioVolumeIndicator();
+    } catch (err) {
+      console.warn('[enableAudioVolumeIndicator] failed:', err);
+    }
+
+    const handleVolumeIndicator = (volumes: Array<{ uid: UID; level: number }>) => {
+      let maxLevel = 8;
+      let dominantUid: UID | null = null;
+
+      for (const v of volumes) {
+        const uidStr = String(v.uid);
+        if (uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID)) continue;
+        if (v.level > maxLevel) {
+          maxLevel = v.level;
+          dominantUid = v.uid;
+        }
+      }
+
+      if (dominantUid !== null) {
+        const isLocalUser = dominantUid === 0 || String(dominantUid) === String(client?.uid);
+        const remoteUidStr = String(dominantUid);
+        const remoteUser = roster[remoteUidStr];
+
+        lastActiveSpeakerRef.current = {
+          uid: isLocalUser ? String(client?.uid) : remoteUidStr,
+          name: isLocalUser
+            ? (agoraData.participantName || `User ${client?.uid}`)
+            : (remoteUser?.name || `User ${remoteUidStr}`),
+          role: isLocalUser
+            ? (agoraData.participantRole || 'Engineer')
+            : (remoteUser?.role || 'Engineer'),
+          isLocal: isLocalUser,
+          timestamp: Date.now(),
+        };
+      }
+    };
+
+    client.on('volume-indicator', handleVolumeIndicator);
+    return () => {
+      client.off('volume-indicator', handleVolumeIndicator);
+    };
+  }, [client, agentUID, agoraData, roster]);
+
   // Transcript + agent state — managed with AgoraVoiceAI (see effect below).
   const [rawTranscript, setRawTranscript] = useState<
     TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>>[]
@@ -735,22 +807,113 @@ export default function ConversationComponent({
     };
   }, [incidentId]);
 
+  // Helper to determine speaker attribution for a human turn
+  const resolveTurnSpeaker = useCallback(
+    (item: TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>>) => {
+      const turnIdStr = String(item.turn_id);
+      const uidStr = String(item.uid);
+      const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
+      if (isAgent) {
+        return {
+          uid: agentUID,
+          name: 'IncidentWeave AI',
+          role: 'AI Incident Commander',
+          isLocal: false,
+        };
+      }
+
+      // 1. Check if we already cached this turn's speaker
+      if (turnSpeakerMap.current[turnIdStr]) {
+        return turnSpeakerMap.current[turnIdStr];
+      }
+
+      // 2. Check if sharedTranscripts (from RTM or Redis) already knows this turn
+      const shared = sharedTranscripts[turnIdStr];
+      if (shared && shared.speakerName) {
+        const isLocalUser = Boolean(
+          agoraData.participantName &&
+          shared.speakerName.trim().toLowerCase() === agoraData.participantName.trim().toLowerCase()
+        );
+        const speaker = {
+          uid: String(shared.uid),
+          name: shared.speakerName,
+          role: shared.speakerRole || 'Engineer',
+          isLocal: isLocalUser,
+        };
+        turnSpeakerMap.current[turnIdStr] = speaker;
+        return speaker;
+      }
+
+      // 3. Check for explicit prefix in transcript text (e.g. "Jonathan: Hello" or "[Jonathan] Hello")
+      const rawText = typeof item.text === 'string' ? item.text.trim() : '';
+      const prefixMatch = rawText.match(/^([A-Za-z0-9_\s-]{2,25})\s*:\s*([\s\S]*)/);
+      if (prefixMatch) {
+        const potentialName = prefixMatch[1].trim();
+        const rosterMatch = Object.values(roster).find(
+          (u) => u.name && u.name.trim().toLowerCase() === potentialName.toLowerCase()
+        );
+        const isLocalUser = Boolean(
+          agoraData.participantName &&
+          potentialName.toLowerCase() === agoraData.participantName.trim().toLowerCase()
+        );
+        const speaker = {
+          uid: rosterMatch?.uid || (isLocalUser ? String(client?.uid) : '0'),
+          name: rosterMatch?.name || potentialName,
+          role: rosterMatch?.role || (isLocalUser ? (agoraData.participantRole || 'Engineer') : 'Engineer'),
+          isLocal: isLocalUser,
+        };
+        turnSpeakerMap.current[turnIdStr] = speaker;
+        return speaker;
+      }
+
+      // 4. Check if RTC volume diarization detected an active speaker recently (within 4.5s)
+      const active = lastActiveSpeakerRef.current;
+      if (Date.now() - active.timestamp < 4500 && active.name) {
+        const speaker = {
+          uid: active.uid,
+          name: active.name,
+          role: active.role,
+          isLocal: active.isLocal,
+        };
+        turnSpeakerMap.current[turnIdStr] = speaker;
+        return speaker;
+      }
+
+      // 5. Default fallback:
+      // If there are remote participants in the room, do not assume local user unless local mic was active.
+      // If only local user is in the room, assume local user.
+      const hasRemoteHumans = Object.keys(roster).some(
+        (uId) => uId !== String(client?.uid) && uId !== agentUID
+      );
+      const speaker = {
+        uid: hasRemoteHumans ? '0' : String(client?.uid),
+        name: hasRemoteHumans ? 'Participant' : (agoraData.participantName || `User ${client?.uid}`),
+        role: hasRemoteHumans ? 'Engineer' : (agoraData.participantRole || 'Engineer'),
+        isLocal: !hasRemoteHumans,
+      };
+      turnSpeakerMap.current[turnIdStr] = speaker;
+      return speaker;
+    },
+    [agentUID, sharedTranscripts, agoraData, roster, client?.uid]
+  );
+
   // Synchronize local voice turns to all meeting participants over RTM,
   // and persist completed turns (both human and agent) to Redis.
   useEffect(() => {
     if (!rtmClient || !client?.uid) return;
 
     rawTranscript.forEach((item) => {
-      const isLocal =
-        item.uid === '0' || String(item.uid) === String(client.uid);
-      const isAgentTurn =
-        String(item.uid) === agentUID || String(item.uid) === String(DEFAULT_AGENT_UID);
-
       const turnIdStr = String(item.turn_id);
       const text = typeof item.text === 'string' ? item.text.trim() : '';
       if (!text) return;
 
-      if (isLocal) {
+      const isAgentTurn =
+        String(item.uid) === agentUID || String(item.uid) === String(DEFAULT_AGENT_UID);
+
+      const speakerInfo = resolveTurnSpeaker(item);
+
+      // Only broadcast and save to Redis if this turn was spoken by the local user!
+      if (!isAgentTurn && speakerInfo.isLocal) {
         // Broadcast local speaker's turn to all participants in the room
         const turnKey = `${turnIdStr}_${item.status}_${text}`;
         if (lastBroadcastTurnRef.current[turnIdStr] !== turnKey) {
@@ -911,42 +1074,46 @@ export default function ConversationComponent({
       });
     });
 
-    // 2. Overlay normalized local turns from AgoraVoiceAI
-    // Local turns take precedence for local user turns and agent turns
+    // 2. Overlay normalized turns from AgoraVoiceAI
+    // Preserves remote speaker attribution from sharedTranscripts / resolveTurnSpeaker
     transcript.forEach((item) => {
       const turnIdStr = String(item.turn_id);
       const existing = map.get(turnIdStr);
       const uidStr = String(item.uid);
       const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
-      const cleanSpeaker = (existing?.speakerName || '').trim().toLowerCase();
-      const cleanCurrent = (agoraData.participantName || '').trim().toLowerCase();
-      const isCurrentUserName = Boolean(cleanCurrent && cleanSpeaker && cleanSpeaker === cleanCurrent);
-      const isLocal = !isAgent && (item.uid === '0' || uidStr === String(client?.uid) || isCurrentUserName);
+
+      const speakerInfo = resolveTurnSpeaker(item);
+
+      // Do NOT overwrite existing remote speaker names from sharedTranscripts!
+      const resolvedSpeakerName = isAgent
+        ? 'IncidentWeave AI'
+        : (existing?.speakerName || speakerInfo.name);
+
+      const resolvedSpeakerRole = isAgent
+        ? 'AI Incident Commander'
+        : (existing?.speakerRole || speakerInfo.role);
+
+      const resolvedUid = isAgent
+        ? agentUID
+        : (existing?.uid || speakerInfo.uid);
+
       map.set(turnIdStr, {
         turn_id: item.turn_id,
-        uid: isLocal ? String(client?.uid) : isAgent ? agentUID : uidStr,
+        uid: resolvedUid,
         text: typeof item.text === 'string' ? item.text : '',
         status: item.status,
         createdAt:
           typeof item._time === 'number'
             ? normalizeTimestampMs(item._time)
             : existing?.createdAt || Date.now(),
-        speakerName: isAgent
-          ? 'IncidentWeave AI'
-          : isLocal
-            ? (agoraData.participantName || `User ${client?.uid}`)
-            : (existing?.speakerName || roster[uidStr]?.name || `User ${uidStr}`),
-        speakerRole: isAgent
-          ? 'AI Incident Commander'
-          : isLocal
-            ? (agoraData.participantRole || 'Engineer')
-            : (existing?.speakerRole || roster[uidStr]?.role || ''),
+        speakerName: resolvedSpeakerName,
+        speakerRole: resolvedSpeakerRole,
         isAgent,
       });
     });
 
     return map;
-  }, [sharedTranscripts, transcript, client?.uid, agentUID, agoraData, roster]);
+  }, [sharedTranscripts, transcript, client?.uid, agentUID, agoraData, roster, resolveTurnSpeaker]);
 
   // Completed (END + INTERRUPTED) messages shown as history.
   // 1. Human turns (local and remote) ALWAYS show when anyone speaks.

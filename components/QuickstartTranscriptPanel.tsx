@@ -138,23 +138,51 @@ export function QuickstartTranscriptPanel({
         ) : (
           visibleMessages.map((message, index) => {
             const uidStr = String(message.uid);
+            let rawText = message.text?.trim() || '';
+            let cleanSpeakerName = (message.speakerName || '').trim();
+            const cleanCurrentName = (currentUserName || '').trim();
+
+            // Extract inline name prefix if present (e.g. "Jonathan: hello" or "[Jonathan] hello")
+            const prefixMatch = rawText.match(/^([A-Za-z0-9_\s-]{2,25})\s*:\s*([\s\S]*)/);
+            if (prefixMatch) {
+              const potentialName = prefixMatch[1].trim();
+              const isKnown =
+                potentialName.toLowerCase() === cleanCurrentName.toLowerCase() ||
+                Object.values(roster).some(
+                  (p) => p.name && p.name.trim().toLowerCase() === potentialName.toLowerCase()
+                );
+              if (isKnown || !cleanSpeakerName || cleanSpeakerName.startsWith('User ')) {
+                cleanSpeakerName = potentialName;
+                rawText = prefixMatch[2].trim();
+              }
+            }
+
             const isAgent =
               Boolean(message.isAgent) ||
               uidStr === agentUID ||
-              uidStr === '100';
+              uidStr === '100' ||
+              cleanSpeakerName.toLowerCase().includes('agent') ||
+              cleanSpeakerName.toLowerCase().includes('incidentweave');
 
-            // Match speaker: local user check by UID or case-insensitive name match
-            const cleanSpeakerName = (message.speakerName || '').trim();
-            const cleanCurrentName = (currentUserName || '').trim();
+            // Explicit check: is this turn from another known user?
+            const isExplicitlyOtherUser = Boolean(
+              !isAgent &&
+              cleanSpeakerName &&
+              cleanCurrentName &&
+              cleanSpeakerName.toLowerCase() !== cleanCurrentName.toLowerCase()
+            );
+
+            // Turn is local ONLY IF it matches the current user's name or local UID (and is not someone else)
             const isNameMatch = Boolean(
               cleanCurrentName &&
               cleanSpeakerName &&
               cleanSpeakerName.toLowerCase() === cleanCurrentName.toLowerCase()
             );
             const isUidMatch = Boolean(
-              localUID && (uidStr === localUID || uidStr === '0')
+              localUID && uidStr === localUID
             );
-            const isLocal = !isAgent && (isUidMatch || isNameMatch);
+
+            const isLocal = !isAgent && !isExplicitlyOtherUser && (isNameMatch || isUidMatch);
 
             // Match against roster if remote
             const matchingRosterUser = Object.values(roster).find(
@@ -166,13 +194,13 @@ export function QuickstartTranscriptPanel({
               ? 'IncidentWeave AI'
               : isLocal && cleanCurrentName
                 ? cleanCurrentName
-                : (matchingRosterUser?.name || message.speakerName || roster[uidStr]?.name || `User ${uidStr}`);
+                : (cleanSpeakerName || matchingRosterUser?.name || roster[uidStr]?.name || (uidStr && uidStr !== '0' ? `User ${uidStr}` : 'Participant'));
 
             const resolvedRole = isAgent
               ? 'AI Incident Commander'
               : isLocal
                 ? (message.speakerRole || roster[uidStr]?.role || 'Engineer')
-                : (matchingRosterUser?.role || roster[uidStr]?.role || message.speakerRole || '');
+                : (matchingRosterUser?.role || message.speakerRole || roster[uidStr]?.role || 'Engineer');
 
             const displayName = isAgent
               ? 'IncidentWeave AI'
@@ -180,8 +208,7 @@ export function QuickstartTranscriptPanel({
                 ? `${resolvedName} (You)`
                 : resolvedName;
 
-            const rawText = message.text?.trim();
-            const text = isAgent ? stripJsonFromText(rawText || '') : rawText;
+            const text = isAgent ? stripJsonFromText(rawText) : rawText;
             if (isAgent && !text) return null;
             const time = formatMessageTime(message.createdAt);
             const isPartial = message === currentInProgressMessage;

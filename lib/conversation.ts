@@ -105,20 +105,18 @@ export function toMessageListItem(
   };
 }
 
-// uid="0" is the toolkit's sentinel for local-user speech. Without remapping it to
-// the actual RTC UID, the transcript panel renders the user's speech on the agent's side.
-// Also normalises punctuation spacing so all turns display consistently.
+// Retain original uid (toolkit uses '0' as sentinel for human speech; do NOT blindly force to localUID)
+// Also normalise punctuation spacing so all turns display consistently.
 export function normalizeTranscript(
   transcript: TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>>[],
-  localUID: string,
+  _localUID?: string,
 ) {
   return transcript.map((item) => {
-    const remappedUID = item.uid === '0' ? localUID : item.uid;
     const normalizedText =
       typeof item.text === 'string'
         ? normalizeTranscriptSpacing(item.text)
         : item.text;
-    return { ...item, uid: remappedUID, text: normalizedText };
+    return { ...item, text: normalizedText };
   });
 }
 
