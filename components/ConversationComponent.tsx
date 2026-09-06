@@ -15,6 +15,8 @@ import {
   AgoraVoiceAI,
   AgoraVoiceAIEvents,
   AgentState,
+  ChatMessagePriority,
+  ChatMessageType,
   MessageSalStatus,
   TranscriptHelperMode,
   TurnStatus,
@@ -107,18 +109,106 @@ export default function ConversationComponent({
 }: ConversationComponentProps) {
   const client = useRTCClient();
   const remoteUsers = useRemoteUsers();
+  const agentUID = String(DEFAULT_AGENT_UID);
 
-  // Subscribe to and auto-play all remote audio tracks (includes AI agent + human participants).
-  // useRemoteAudioTracks handles both subscription and playback — replacing manual track.play() calls
-  // which failed when tracks weren't yet subscribed.
-  const { audioTracks: remoteAudioTracks } = useRemoteAudioTracks(remoteUsers);
+  // Separate remote human participants from the AI agent:
+  // - Humans: audio always plays at full volume so participants always hear each other.
+  // - AI Agent: audio is muted by default (silent observer), and ONLY plays when the user clicks "Ask AI to Speak".
+  const humanRemoteUsers = useMemo(
+    () =>
+      remoteUsers.filter(
+        (u) =>
+          String(u.uid) !== agentUID &&
+          String(u.uid) !== String(DEFAULT_AGENT_UID),
+      ),
+    [remoteUsers, agentUID],
+  );
+  const agentRemoteUsers = useMemo(
+    () =>
+      remoteUsers.filter(
+        (u) =>
+          String(u.uid) === agentUID ||
+          String(u.uid) === String(DEFAULT_AGENT_UID),
+      ),
+    [remoteUsers, agentUID],
+  );
+
+  // Human audio tracks auto-play immediately so all participants hear each other clearly.
+  const { audioTracks: humanAudioTracks } = useRemoteAudioTracks(humanRemoteUsers);
   useEffect(() => {
-    remoteAudioTracks.forEach((track) => {
+    humanAudioTracks.forEach((track) => {
+      track.setVolume(100);
       if (!track.isPlaying) {
         track.play();
       }
     });
-  }, [remoteAudioTracks]);
+  }, [humanAudioTracks]);
+
+  // AI Agent audio tracks: strictly silenced until the user clicks the Speak button.
+  const [isAgentSpeechAllowed, setIsAgentSpeechAllowed] = useState(false);
+  const [isAgentPrompting, setIsAgentPrompting] = useState(false);
+  const { audioTracks: agentAudioTracks } = useRemoteAudioTracks(agentRemoteUsers);
+
+  useEffect(() => {
+    agentAudioTracks.forEach((track) => {
+      if (isAgentSpeechAllowed) {
+        track.setVolume(100);
+        if (!track.isPlaying) {
+          track.play();
+        }
+      } else {
+        track.setVolume(0);
+        if (track.isPlaying) {
+          track.stop();
+        }
+      }
+    });
+  }, [agentAudioTracks, isAgentSpeechAllowed]);
+
+  // Explicit handler to invoke Agora AI agent speech on button click
+  const handleTriggerAgentSpeech = useCallback(async () => {
+    try {
+      setIsAgentPrompting(true);
+      setIsAgentSpeechAllowed(true);
+
+      // Unmute and play agent track
+      agentAudioTracks.forEach((track) => {
+        track.setVolume(100);
+        if (!track.isPlaying) {
+          track.play();
+        }
+      });
+
+      // Prompt the Agora Conversational AI agent via RTM to synthesize a spoken update
+      const ai = AgoraVoiceAI.getInstance();
+      if (ai) {
+        await ai.sendText(agentUID, {
+          messageType: ChatMessageType.TEXT,
+          priority: ChatMessagePriority.INTERRUPTED,
+          responseInterruptable: true,
+          text: 'IncidentWeave, please give a concise 1-sentence voice update to the incident team on current findings.',
+        });
+      }
+    } catch (err) {
+      console.warn('[handleTriggerAgentSpeech] failed:', err);
+    } finally {
+      setTimeout(() => setIsAgentPrompting(false), 1800);
+    }
+  }, [agentAudioTracks, agentUID]);
+
+  // Handler to silence and interrupt the AI agent
+  const handleStopAgentSpeech = useCallback(() => {
+    setIsAgentSpeechAllowed(false);
+    agentAudioTracks.forEach((track) => {
+      track.setVolume(0);
+      if (track.isPlaying) {
+        track.stop();
+      }
+    });
+    try {
+      AgoraVoiceAI.getInstance()?.interrupt(agentUID);
+    } catch {}
+  }, [agentAudioTracks, agentUID]);
 
   const [isEnabled, setIsEnabled] = useState(true);
   const [isAgentConnected, setIsAgentConnected] = useState(false);
@@ -127,7 +217,6 @@ export default function ConversationComponent({
   // Tracks granular RTC connection state for the status dot.
   // Agora states: DISCONNECTED | CONNECTING | CONNECTED | DISCONNECTING | RECONNECTING
   const [connectionState, setConnectionState] = useState<string>('CONNECTING');
-  const agentUID = String(DEFAULT_AGENT_UID);
   const [joinedUID, setJoinedUID] = useState<UID>(0);
 
   // Meeting features state: chat panel, participants panel, invite modal, and live room roster
@@ -691,29 +780,43 @@ export default function ConversationComponent({
     return normalizeTranscript(rawTranscript, String(client.uid));
   }, [rawTranscript, client.uid]);
 
-  // Unified participant list ensuring local user entered name & role are present
-  // alongside all registered room participants and remote RTC users.
+  // Unified participant list ensuring ONLY currently connected people in the meeting are shown:
+  // 1. Current local user (agoraData.uid)
+  // 2. Active remote users currently present in the RTC channel (remoteUsers, excluding agent)
+  // Any stale UIDs from previous sessions are strictly excluded.
   const participantList = useMemo(() => {
-    const map: Record<string, { uid: string; name: string; role: string }> = { ...roster };
+    const list: { uid: string; name: string; role: string }[] = [];
+    const seenUids = new Set<string>();
+
     if (agoraData.uid) {
       const selfUid = String(agoraData.uid);
-      map[selfUid] = {
+      seenUids.add(selfUid);
+      list.push({
         uid: selfUid,
-        name: agoraData.participantName || map[selfUid]?.name || `User ${selfUid}`,
-        role: agoraData.participantRole || map[selfUid]?.role || 'Engineer',
-      };
+        name: agoraData.participantName || roster[selfUid]?.name || `User ${selfUid}`,
+        role: agoraData.participantRole || roster[selfUid]?.role || 'Engineer',
+      });
     }
+
     remoteUsers.forEach((u) => {
       const uUid = String(u.uid);
-      if (!map[uUid] && uUid !== agentUID && uUid !== String(DEFAULT_AGENT_UID)) {
-        map[uUid] = {
-          uid: uUid,
-          name: `User ${uUid}`,
-          role: 'Participant',
-        };
+      if (
+        uUid === agentUID ||
+        uUid === String(DEFAULT_AGENT_UID) ||
+        seenUids.has(uUid)
+      ) {
+        return;
       }
+      seenUids.add(uUid);
+      const meta = roster[uUid];
+      list.push({
+        uid: uUid,
+        name: meta?.name || `User ${uUid}`,
+        role: meta?.role || 'Engineer',
+      });
     });
-    return Object.values(map);
+
+    return list;
   }, [roster, agoraData, remoteUsers, agentUID]);
 
   // Unified chronological transcript combining:
@@ -889,8 +992,28 @@ export default function ConversationComponent({
   useClientEvent(client, 'token-privilege-will-expire', handleTokenWillExpire);
 
   const handleEndConversation = useCallback(async () => {
+    if (agoraData.uid) {
+      fetch(`/api/incident/roster?id=${encodeURIComponent(incidentId)}&uid=${encodeURIComponent(agoraData.uid)}`, {
+        method: 'DELETE',
+      }).catch(() => {});
+    }
     onEndConversation();
-  }, [onEndConversation]);
+  }, [agoraData.uid, incidentId, onEndConversation]);
+
+  useEffect(() => {
+    const handleUnload = () => {
+      if (agoraData.uid) {
+        fetch(`/api/incident/roster?id=${encodeURIComponent(incidentId)}&uid=${encodeURIComponent(agoraData.uid)}`, {
+          method: 'DELETE',
+          keepalive: true,
+        }).catch(() => {});
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, [incidentId, agoraData.uid]);
 
   return (
     <>
@@ -938,11 +1061,11 @@ export default function ConversationComponent({
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
               <span>People</span>
-              {/* Live participant count badge: roster entries + AI agent */}
+              {/* Live participant count badge: only shows people currently in the meeting */}
               <span className={`ml-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-[10px] font-bold ${
                 isParticipantsOpen ? 'bg-white/20 text-white' : 'bg-emerald-500/20 text-emerald-400'
               }`}>
-                {participantList.length + 1 /* +1 for AI agent */}
+                {participantList.length}
               </span>
             </button>
 
@@ -989,11 +1112,52 @@ export default function ConversationComponent({
         }
         visualizer={
           <div
-            className="relative flex h-full min-h-[20rem] w-full max-w-4xl items-center justify-center"
+            className="relative flex h-full min-h-[20rem] w-full max-w-4xl flex-col items-center justify-center"
             role="region"
             aria-label="AI agent status visualization"
           >
             <AgentVisualizer state={visualizerState} size="lg" />
+
+            {/* AI Agent Speech Controller Banner & Button */}
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5 z-10">
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium border backdrop-blur-sm transition-colors ${
+                isAgentSpeechAllowed
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : 'border-white/10 bg-black/40 text-white/60'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${
+                  isAgentSpeechAllowed ? 'bg-emerald-400 animate-ping' : 'bg-white/30'
+                }`} />
+                {isAgentSpeechAllowed ? 'AI Voice: Active & Speaking' : 'AI Voice: Silent Observer'}
+              </span>
+
+              {!isAgentSpeechAllowed ? (
+                <button
+                  id="visualizer-ask-agent-speak-btn"
+                  onClick={handleTriggerAgentSpeech}
+                  disabled={isAgentPrompting}
+                  className="flex items-center gap-1.5 rounded-full border border-violet-500/50 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 px-4 py-1.5 text-xs font-semibold text-white shadow-lg shadow-violet-500/25 active:scale-95 disabled:opacity-50 transition-all cursor-pointer"
+                  title="Click to command the Agora AI agent to speak an update"
+                >
+                  <svg className={`w-3.5 h-3.5 ${isAgentPrompting ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                  <span>{isAgentPrompting ? 'Invoking AI...' : 'Ask AI to Speak'}</span>
+                </button>
+              ) : (
+                <button
+                  onClick={handleStopAgentSpeech}
+                  className="flex items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/20 hover:bg-red-500/30 px-3.5 py-1.5 text-xs font-semibold text-red-300 transition-colors shadow-sm active:scale-95 cursor-pointer"
+                  title="Silence and mute the AI agent"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                  </svg>
+                  <span>Silence AI</span>
+                </button>
+              )}
+            </div>
+
             {/* Open Dashboard button — floats in top-right of visualizer area */}
             <a
               href={`/dashboard?id=${encodeURIComponent(incidentId)}`}
@@ -1048,6 +1212,49 @@ export default function ConversationComponent({
               </button>
             </div>
             <MicrophoneSelector localMicrophoneTrack={localMicrophoneTrack} />
+
+            <div className="h-6 w-px bg-white/10" />
+
+            {/* AI Agent Speech Controller in Bottom Dock */}
+            {!isAgentSpeechAllowed ? (
+              <button
+                id="controls-ask-agent-speak-btn"
+                onClick={handleTriggerAgentSpeech}
+                disabled={isAgentPrompting}
+                className="flex items-center gap-2 rounded-full border border-violet-500/40 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 hover:from-violet-600/50 hover:to-indigo-600/50 px-3.5 py-2 text-xs font-semibold text-violet-200 transition-all shadow-md hover:shadow-violet-500/20 active:scale-95 disabled:opacity-50 cursor-pointer"
+                title="Only when clicked does the Agora AI agent speak"
+              >
+                <svg className={`w-3.5 h-3.5 text-violet-300 ${isAgentPrompting ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                <span>{isAgentPrompting ? 'Invoking AI...' : 'Ask AI to Speak'}</span>
+                <span className="rounded bg-violet-500/20 px-1 py-0.5 text-[9px] text-violet-300 font-mono">
+                  Silent
+                </span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleTriggerAgentSpeech}
+                  disabled={isAgentPrompting}
+                  className="flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/20 hover:bg-emerald-500/30 px-3 py-2 text-xs font-semibold text-emerald-300 transition-all animate-pulse cursor-pointer"
+                  title="AI Voice is active. Click to request another update"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span>AI Speaking</span>
+                </button>
+                <button
+                  onClick={handleStopAgentSpeech}
+                  className="flex items-center justify-center w-8 h-8 rounded-full border border-red-500/40 bg-red-500/15 hover:bg-red-500/30 text-red-300 transition-colors cursor-pointer"
+                  title="Silence AI agent voice"
+                  aria-label="Silence AI agent voice"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                  </svg>
+                </button>
+              </div>
+            )}
           </div>
         }
         chatPanel={
@@ -1070,7 +1277,7 @@ export default function ConversationComponent({
               <div>
                 <h2 className="text-sm font-semibold text-foreground">Participants</h2>
                 <p className="text-xs text-muted-foreground">
-                  {participantList.length + 1} in this room
+                  {participantList.length} in this room
                 </p>
               </div>
               <button
@@ -1093,17 +1300,19 @@ export default function ConversationComponent({
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm font-semibold text-violet-300">IncidentWeave AI</span>
-                  <span className="text-[10px] text-violet-400/70 font-medium">Voice Agent</span>
+                  <span className="text-[10px] text-violet-400/70 font-medium">
+                    {isAgentSpeechAllowed ? 'Voice Enabled' : 'Silent Observer'}
+                  </span>
                 </div>
                 <span className={`flex h-5 items-center gap-1 rounded-full px-2 text-[10px] font-semibold ${
-                  isAgentConnected
+                  isAgentSpeechAllowed
                     ? 'bg-emerald-500/15 text-emerald-400'
-                    : 'bg-white/5 text-white/30'
+                    : 'bg-violet-500/15 text-violet-400'
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${
-                    isAgentConnected ? 'bg-emerald-400 animate-pulse' : 'bg-white/20'
+                    isAgentSpeechAllowed ? 'bg-emerald-400 animate-pulse' : 'bg-violet-400'
                   }`} />
-                  {isAgentConnected ? 'Active' : 'Standby'}
+                  {isAgentSpeechAllowed ? 'Speaking' : 'Silent'}
                 </span>
               </div>
 
@@ -1117,8 +1326,6 @@ export default function ConversationComponent({
                   .join('')
                   .toUpperCase()
                   .slice(0, 2) || (isSelf ? 'ME' : 'U');
-                const isRemoteActive = remoteUsers.some((u) => String(u.uid) === participant.uid);
-                const isLive = isSelf || isRemoteActive;
                 return (
                   <div
                     key={participant.uid}
@@ -1144,13 +1351,9 @@ export default function ConversationComponent({
                         <span>{participant.role || 'Participant'}</span>
                       </div>
                     </div>
-                    <span className={`flex h-5 items-center gap-1 rounded-full px-2 text-[10px] font-semibold ${
-                      isLive ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        isLive ? 'bg-emerald-400' : 'bg-white/20'
-                      }`} />
-                      {isLive ? 'Live' : 'Away'}
+                    <span className="flex h-5 items-center gap-1 rounded-full px-2 text-[10px] font-semibold bg-emerald-500/15 text-emerald-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Live
                     </span>
                   </div>
                 );
