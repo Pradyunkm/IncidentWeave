@@ -57,13 +57,15 @@ export function QuickstartTranscriptPanel({
 }: QuickstartTranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const visibleMessages = useMemo(
-    () =>
-      currentInProgressMessage
-        ? [...messageList, currentInProgressMessage]
-        : messageList,
-    [currentInProgressMessage, messageList],
-  );
+  const visibleMessages = useMemo(() => {
+    if (!currentInProgressMessage) return messageList;
+    const progressTurnId = currentInProgressMessage.turn_id !== undefined ? String(currentInProgressMessage.turn_id) : '';
+    const alreadyCompleted = messageList.some(
+      (m) => progressTurnId && m.turn_id !== undefined && String(m.turn_id) === progressTurnId
+    );
+    if (alreadyCompleted) return messageList;
+    return [...messageList, currentInProgressMessage];
+  }, [currentInProgressMessage, messageList]);
 
   const handleClear = () => {
     onClear?.();
@@ -166,10 +168,11 @@ export function QuickstartTranscriptPanel({
               cleanSpeakerName.toLowerCase() === cleanCurrentName.toLowerCase()
             );
             const isUidMatch = Boolean(
-              localUID && uidStr === localUID
+              (localUID && uidStr === localUID) ||
+              (!isExplicitlyOtherUser && (uidStr === '0' || uidStr === ''))
             );
 
-            const isLocal = !isAgent && !isExplicitlyOtherUser && (isNameMatch || isUidMatch);
+            const isLocal = !isAgent && !isExplicitlyOtherUser && (isNameMatch || isUidMatch || !cleanSpeakerName);
 
             // Match against roster if remote
             const matchingRosterUser = Object.values(roster).find(

@@ -4,11 +4,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import AgoraRTC, {
   useRTCClient,
   useLocalMicrophoneTrack,
+  useLocalCameraTrack,
   useRemoteUsers,
   useRemoteAudioTracks,
   useClientEvent,
   useJoin,
   usePublish,
+  LocalVideoTrack,
+  RemoteVideoTrack,
   UID,
 } from 'agora-rtc-react';
 import {
@@ -154,22 +157,23 @@ export default function ConversationComponent({
   // Master persistent transcript store: retains ALL completed turns (local, remote, agent).
   // Turns are NEVER deleted automatically. They are ONLY deleted when the user clicks "Clear".
   const [accumulatedTurns, setAccumulatedTurns] = useState<Record<string, IMessageListItem>>({});
-  const clearedTurnIdsRef = useRef<Set<string>>(new Set());
+  const clearedBeforeRef = useRef<number>(0);
+
+  // Camera video track state & management
+  const [isCameraEnabled, setIsCameraEnabled] = useState(false);
+  const { localCameraTrack } = useLocalCameraTrack(isCameraEnabled);
 
   const handleClearTranscript = useCallback(() => {
-    // Record all existing turn IDs as cleared so late-arriving packets are ignored
-    const existingIds = Object.keys(accumulatedTurns);
-    clearedTurnIdsRef.current = new Set(existingIds);
-
-    // Empty state
+    clearedBeforeRef.current = Date.now();
     setAccumulatedTurns({});
     setSharedTranscripts({});
     setRawTranscript([]);
+    turnSpeakerMap.current = {};
 
     fetch(`/api/incident/transcript?id=${encodeURIComponent(incidentId)}`, {
       method: 'DELETE',
     }).catch(() => {});
-  }, [incidentId, accumulatedTurns]);
+  }, [incidentId]);
   const { audioTracks: agentAudioTracks } = useRemoteAudioTracks(agentRemoteUsers);
 
   useEffect(() => {
@@ -596,34 +600,38 @@ export default function ConversationComponent({
           isAgent?: boolean;
         };
 
-        const turnIdStr = String(item.turn_id);
-        if (!clearedTurnIdsRef.current.has(turnIdStr)) {
-          setAccumulatedTurns((prev) => ({
+        const turnTime = item.createdAt ?? Date.now();
+        if (clearedBeforeRef.current > 0 && turnTime <= clearedBeforeRef.current) return;
+
+        const turnIdStr = String(item.turn_id ?? turnTime);
+        const key = `${item.isAgent ? 'agent' : (item.uid || 'human')}_${turnIdStr}`;
+
+        setAccumulatedTurns((prev) => ({
+          ...prev,
+          [key]: {
+            turn_id: item.turn_id,
+            uid: item.uid,
+            speakerName: item.speakerName,
+            speakerRole: item.speakerRole || 'Engineer',
+            text: item.text,
+            status: item.status,
+            createdAt: turnTime,
+            isAgent: Boolean(item.isAgent),
+          },
+        }));
+
+        const myUid = String(agoraData.uid || client?.uid || '');
+        if (String(item.uid) !== myUid) {
+          setSharedTranscripts((prev) => ({
             ...prev,
-            [turnIdStr]: {
+            [key]: {
               turn_id: item.turn_id,
               uid: item.uid,
               speakerName: item.speakerName,
               speakerRole: item.speakerRole || 'Engineer',
               text: item.text,
               status: item.status,
-              createdAt: item.createdAt,
-              isAgent: Boolean(item.isAgent),
-            },
-          }));
-        }
-
-        if (String(item.uid) !== String(client.uid)) {
-          setSharedTranscripts((prev) => ({
-            ...prev,
-            [turnIdStr]: {
-              turn_id: item.turn_id,
-              uid: item.uid,
-              speakerName: item.speakerName,
-              speakerRole: item.speakerRole,
-              text: item.text,
-              status: item.status,
-              createdAt: item.createdAt,
+              createdAt: turnTime,
               isAgent: Boolean(item.isAgent),
             },
           }));
@@ -818,9 +826,12 @@ export default function ConversationComponent({
           setAccumulatedTurns((prev) => {
             const next = { ...prev };
             for (const item of data.transcripts) {
-              const id = String(item.turn_id);
-              if (!clearedTurnIdsRef.current.has(id) && !next[id]) {
-                next[id] = item;
+              const turnTime = item.createdAt ?? 0;
+              if (clearedBeforeRef.current > 0 && turnTime <= clearedBeforeRef.current) continue;
+              const id = String(item.turn_id ?? turnTime);
+              const key = `${item.isAgent ? 'agent' : (item.uid || 'human')}_${id}`;
+              if (!next[key]) {
+                next[key] = item;
               }
             }
             return next;
@@ -828,9 +839,12 @@ export default function ConversationComponent({
           setSharedTranscripts((prev) => {
             const next = { ...prev };
             for (const item of data.transcripts) {
-              const id = String(item.turn_id);
-              if (!next[id]) {
-                next[id] = item;
+              const turnTime = item.createdAt ?? 0;
+              if (clearedBeforeRef.current > 0 && turnTime <= clearedBeforeRef.current) continue;
+              const id = String(item.turn_id ?? turnTime);
+              const key = `${item.isAgent ? 'agent' : (item.uid || 'human')}_${id}`;
+              if (!next[key]) {
+                next[key] = item;
               }
             }
             return next;
@@ -846,8 +860,8 @@ export default function ConversationComponent({
   // Helper to determine speaker attribution for a human turn
   const resolveTurnSpeaker = useCallback(
     (item: TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>>) => {
-      const turnIdStr = String(item.turn_id);
-      const uidStr = String(item.uid);
+      const turnIdStr = String(item.turn_id ?? '0');
+      const uidStr = String(item.uid ?? '0');
       const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
       if (isAgent) {
         return {
@@ -858,14 +872,14 @@ export default function ConversationComponent({
         };
       }
 
-      // 1. Check if we already cached this turn's speaker
-      if (turnSpeakerMap.current[turnIdStr]) {
+      // 1. Check if we already cached this turn's speaker with a confident (non-generic) name
+      if (turnSpeakerMap.current[turnIdStr] && turnSpeakerMap.current[turnIdStr].name !== 'Participant') {
         return turnSpeakerMap.current[turnIdStr];
       }
 
-      // 2. Check if sharedTranscripts (from RTM or Redis) already knows this turn
+      // 2. Check if sharedTranscripts (from remote RTM or Redis) already knows this turn
       const shared = sharedTranscripts[turnIdStr];
-      if (shared && shared.speakerName) {
+      if (shared && shared.speakerName && shared.speakerName !== 'Participant') {
         const isLocalUser = Boolean(
           agoraData.participantName &&
           shared.speakerName.trim().toLowerCase() === agoraData.participantName.trim().toLowerCase()
@@ -893,7 +907,7 @@ export default function ConversationComponent({
           potentialName.toLowerCase() === agoraData.participantName.trim().toLowerCase()
         );
         const speaker = {
-          uid: rosterMatch?.uid || (isLocalUser ? String(client?.uid) : '0'),
+          uid: rosterMatch?.uid || (isLocalUser ? String(agoraData.uid || client?.uid || '0') : '0'),
           name: rosterMatch?.name || potentialName,
           role: rosterMatch?.role || (isLocalUser ? (agoraData.participantRole || 'Engineer') : 'Engineer'),
           isLocal: isLocalUser,
@@ -904,7 +918,7 @@ export default function ConversationComponent({
 
       // 4. Check if RTC volume diarization detected an active speaker recently (within 4.5s)
       const active = lastActiveSpeakerRef.current;
-      if (Date.now() - active.timestamp < 4500 && active.name) {
+      if (Date.now() - active.timestamp < 4500 && active.name && active.name !== 'Participant') {
         const speaker = {
           uid: active.uid,
           name: active.name,
@@ -916,50 +930,80 @@ export default function ConversationComponent({
       }
 
       // 5. Default fallback:
-      // If there are remote participants in the room, do not assume local user unless local mic was active.
-      // If only local user is in the room, assume local user.
       const hasRemoteHumans = Object.keys(roster).some(
-        (uId) => uId !== String(client?.uid) && uId !== agentUID
+        (uId) => uId !== String(client?.uid) && uId !== String(agoraData.uid) && uId !== agentUID
       );
-      const speaker = {
-        uid: hasRemoteHumans ? '0' : String(client?.uid),
-        name: hasRemoteHumans ? 'Participant' : (agoraData.participantName || `User ${client?.uid}`),
-        role: hasRemoteHumans ? 'Engineer' : (agoraData.participantRole || 'Engineer'),
-        isLocal: !hasRemoteHumans,
+
+      // If only local user is in the room, it's definitely the local user
+      if (!hasRemoteHumans) {
+        const speaker = {
+          uid: String(agoraData.uid || client?.uid || '0'),
+          name: agoraData.participantName || `User ${agoraData.uid}`,
+          role: agoraData.participantRole || 'Engineer',
+          isLocal: true,
+        };
+        turnSpeakerMap.current[turnIdStr] = speaker;
+        return speaker;
+      }
+
+      // If uid is '0' (the toolkit's local sentinel) or matches local user UID
+      if (uidStr === '0' || uidStr === String(agoraData.uid) || uidStr === String(client?.uid)) {
+        return {
+          uid: String(agoraData.uid || client?.uid || '0'),
+          name: agoraData.participantName || `User ${agoraData.uid}`,
+          role: agoraData.participantRole || 'Engineer',
+          isLocal: true,
+        };
+      }
+
+      // Check roster for remote UID match
+      const remoteUser = roster[uidStr];
+      if (remoteUser) {
+        const speaker = {
+          uid: uidStr,
+          name: remoteUser.name,
+          role: remoteUser.role || 'Engineer',
+          isLocal: false,
+        };
+        turnSpeakerMap.current[turnIdStr] = speaker;
+        return speaker;
+      }
+
+      return {
+        uid: uidStr,
+        name: 'Participant',
+        role: 'Engineer',
+        isLocal: false,
       };
-      turnSpeakerMap.current[turnIdStr] = speaker;
-      return speaker;
     },
     [agentUID, sharedTranscripts, agoraData, roster, client?.uid]
   );
 
-  // Synchronize local voice turns to all meeting participants over RTM,
-  // and persist completed turns (both human and agent) to Redis.
+  // Commit completed turns to master store unconditionally so they are NEVER lost
+  // when AgoraVoiceAI purges its internal buffer.
   useEffect(() => {
-    if (!rtmClient || !client?.uid) return;
+    if (!rawTranscript.length) return;
 
     rawTranscript.forEach((item) => {
-      const turnIdStr = String(item.turn_id);
-      if (clearedTurnIdsRef.current.has(turnIdStr)) return;
-
       const text = typeof item.text === 'string' ? item.text.trim() : '';
       if (!text) return;
+      const turnTime = typeof item._time === 'number' ? normalizeTimestampMs(item._time) : Date.now();
+      if (clearedBeforeRef.current > 0 && turnTime <= clearedBeforeRef.current) return;
 
       const isAgentTurn =
         String(item.uid) === agentUID || String(item.uid) === String(DEFAULT_AGENT_UID);
-
       const speakerInfo = resolveTurnSpeaker(item);
 
-      // Commit completed turns to master store so they are NEVER lost when toolkit purges internal buffer
       if (item.status === TurnStatus.END || item.status === TurnStatus.INTERRUPTED) {
+        const key = `${isAgentTurn ? 'agent' : (speakerInfo.uid || 'human')}_${item.turn_id ?? turnTime}`;
         setAccumulatedTurns((prev) => {
-          const existing = prev[turnIdStr];
+          const existing = prev[key];
           if (existing && existing.status === item.status && existing.text === text) {
             return prev;
           }
           const resolvedSpeakerName = isAgentTurn
             ? 'IncidentWeave AI'
-            : (existing?.speakerName || speakerInfo.name);
+            : (existing?.speakerName && existing.speakerName !== 'Participant' ? existing.speakerName : speakerInfo.name);
           const resolvedSpeakerRole = isAgentTurn
             ? 'AI Incident Commander'
             : (existing?.speakerRole || speakerInfo.role);
@@ -969,15 +1013,12 @@ export default function ConversationComponent({
 
           return {
             ...prev,
-            [turnIdStr]: {
+            [key]: {
               turn_id: item.turn_id,
               uid: resolvedUid,
               text,
               status: item.status,
-              createdAt:
-                typeof item._time === 'number'
-                  ? normalizeTimestampMs(item._time)
-                  : existing?.createdAt || Date.now(),
+              createdAt: turnTime,
               speakerName: resolvedSpeakerName,
               speakerRole: resolvedSpeakerRole,
               isAgent: isAgentTurn,
@@ -985,23 +1026,42 @@ export default function ConversationComponent({
           };
         });
       }
+    });
+  }, [rawTranscript, agentUID, resolveTurnSpeaker]);
 
-      // Only broadcast and save to Redis if this turn was spoken by the local user!
+  // Synchronize local voice turns to all meeting participants over RTM,
+  // and persist completed turns (both human and agent) to Redis.
+  useEffect(() => {
+    if (!rawTranscript.length) return;
+
+    const myUid = String(agoraData.uid || client?.uid || '0');
+
+    rawTranscript.forEach((item) => {
+      const text = typeof item.text === 'string' ? item.text.trim() : '';
+      if (!text) return;
+      const turnTime = typeof item._time === 'number' ? normalizeTimestampMs(item._time) : Date.now();
+      if (clearedBeforeRef.current > 0 && turnTime <= clearedBeforeRef.current) return;
+
+      const turnIdStr = String(item.turn_id ?? turnTime);
+      const isAgentTurn =
+        String(item.uid) === agentUID || String(item.uid) === String(DEFAULT_AGENT_UID);
+      const speakerInfo = resolveTurnSpeaker(item);
+
+      // Broadcast and save to Redis if this turn was spoken by the local user!
       if (!isAgentTurn && speakerInfo.isLocal) {
-        // Broadcast local speaker's turn to all participants in the room
         const turnKey = `${turnIdStr}_${item.status}_${text}`;
-        if (lastBroadcastTurnRef.current[turnIdStr] !== turnKey) {
+        if (rtmClient && lastBroadcastTurnRef.current[turnIdStr] !== turnKey) {
           lastBroadcastTurnRef.current[turnIdStr] = turnKey;
 
           const payload = JSON.stringify({
             type: RTM_TRANSCRIPT_TYPE,
             turn_id: item.turn_id,
-            uid: String(client.uid),
-            speakerName: agoraData.participantName || `User ${client.uid}`,
+            uid: myUid,
+            speakerName: agoraData.participantName || `User ${myUid}`,
             speakerRole: agoraData.participantRole || 'Engineer',
             text: normalizeTranscriptSpacing(text),
             status: item.status,
-            createdAt: normalizeTimestampMs(item._time || Date.now()),
+            createdAt: turnTime,
             isAgent: false,
           });
 
@@ -1021,12 +1081,12 @@ export default function ConversationComponent({
               incidentId,
               item: {
                 turn_id: item.turn_id,
-                uid: String(client.uid),
-                speakerName: agoraData.participantName || `User ${client.uid}`,
+                uid: myUid,
+                speakerName: agoraData.participantName || `User ${myUid}`,
                 speakerRole: agoraData.participantRole || 'Engineer',
                 text: normalizeTranscriptSpacing(text),
                 status: item.status,
-                createdAt: normalizeTimestampMs(item._time || Date.now()),
+                createdAt: turnTime,
                 isAgent: false,
               },
             }),
@@ -1058,7 +1118,7 @@ export default function ConversationComponent({
                   speakerRole: 'AI Incident Commander',
                   text: normalizeTranscriptSpacing(cleanText),
                   status: item.status,
-                  createdAt: normalizeTimestampMs(item._time || Date.now()),
+                  createdAt: turnTime,
                   isAgent: true,
                 },
               }),
@@ -1067,14 +1127,14 @@ export default function ConversationComponent({
         }
       }
     });
-  }, [rawTranscript, agoraData, client?.uid, rtmClient, incidentId, agentUID, isAgentSpeechAllowed, agentState]);
+  }, [rawTranscript, agoraData, client?.uid, rtmClient, incidentId, agentUID, isAgentSpeechAllowed, agentState, resolveTurnSpeaker]);
 
   // The toolkit uses uid="0" for local user speech — remap to actual RTC UID
   // so the transcript panel renders user messages on the correct side.
   // Also normalize punctuation spacing for display when upstream text arrives compacted.
   const transcript = useMemo(() => {
-    return normalizeTranscript(rawTranscript, String(client.uid));
-  }, [rawTranscript, client.uid]);
+    return normalizeTranscript(rawTranscript, String(agoraData.uid || client?.uid || ''));
+  }, [rawTranscript, agoraData.uid, client?.uid]);
 
   // Unified participant list ensuring ONLY currently connected people in the meeting are shown:
   // 1. Current local user (agoraData.uid)
@@ -1121,19 +1181,21 @@ export default function ConversationComponent({
   // 3. Live turns from AgoraVoiceAI (including current in-progress stream)
   const unifiedTranscriptMap = useMemo(() => {
     const map = new Map<string, IMessageListItem>();
+    const cutoff = clearedBeforeRef.current;
 
     // 1. Seed with accumulated completed history (never deleted unless user clicks Clear)
     Object.values(accumulatedTurns).forEach((item) => {
-      const turnIdStr = String(item.turn_id);
-      if (!clearedTurnIdsRef.current.has(turnIdStr)) {
-        map.set(turnIdStr, item);
-      }
+      const turnTime = item.createdAt ?? 0;
+      if (cutoff > 0 && turnTime <= cutoff) return;
+      const turnIdStr = String(item.turn_id ?? turnTime);
+      const key = `${item.isAgent ? 'agent' : (item.uid || 'human')}_${turnIdStr}`;
+      map.set(key, item);
     });
 
     // 2. Overlay shared/remote/hydrated transcripts
     Object.values(sharedTranscripts).forEach((item) => {
-      const turnIdStr = String(item.turn_id);
-      if (clearedTurnIdsRef.current.has(turnIdStr)) return;
+      const turnTime = item.createdAt ?? 0;
+      if (cutoff > 0 && turnTime <= cutoff) return;
 
       const isAgent =
         String(item.uid) === agentUID ||
@@ -1143,7 +1205,10 @@ export default function ConversationComponent({
       const cleanCurrent = (agoraData.participantName || '').trim().toLowerCase();
       const isCurrentUserName = Boolean(cleanCurrent && cleanSpeaker && cleanSpeaker === cleanCurrent);
 
-      map.set(turnIdStr, {
+      const turnIdStr = String(item.turn_id ?? turnTime);
+      const key = `${isAgent ? 'agent' : (item.uid || 'human')}_${turnIdStr}`;
+
+      map.set(key, {
         ...item,
         isAgent,
         speakerName: isAgent
@@ -1161,19 +1226,21 @@ export default function ConversationComponent({
 
     // 3. Overlay live turns from AgoraVoiceAI
     transcript.forEach((item) => {
-      const turnIdStr = String(item.turn_id);
-      if (clearedTurnIdsRef.current.has(turnIdStr)) return;
+      const turnTime = typeof item._time === 'number' ? normalizeTimestampMs(item._time) : Date.now();
+      if (cutoff > 0 && turnTime <= cutoff) return;
 
-      const existing = map.get(turnIdStr);
       const uidStr = String(item.uid);
       const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
-
       const speakerInfo = resolveTurnSpeaker(item);
+
+      const turnIdStr = String(item.turn_id ?? turnTime);
+      const key = `${isAgent ? 'agent' : (speakerInfo.uid || 'human')}_${turnIdStr}`;
+      const existing = map.get(key);
 
       // Do NOT overwrite existing remote speaker names from sharedTranscripts or accumulatedTurns!
       const resolvedSpeakerName = isAgent
         ? 'IncidentWeave AI'
-        : (existing?.speakerName || speakerInfo.name);
+        : (existing?.speakerName && existing.speakerName !== 'Participant' ? existing.speakerName : speakerInfo.name);
 
       const resolvedSpeakerRole = isAgent
         ? 'AI Incident Commander'
@@ -1183,15 +1250,12 @@ export default function ConversationComponent({
         ? agentUID
         : (existing?.uid || speakerInfo.uid);
 
-      map.set(turnIdStr, {
+      map.set(key, {
         turn_id: item.turn_id,
         uid: resolvedUid,
         text: typeof item.text === 'string' ? item.text : '',
         status: item.status,
-        createdAt:
-          typeof item._time === 'number'
-            ? normalizeTimestampMs(item._time)
-            : existing?.createdAt || Date.now(),
+        createdAt: turnTime,
         speakerName: resolvedSpeakerName,
         speakerRole: resolvedSpeakerRole,
         isAgent,
@@ -1199,17 +1263,20 @@ export default function ConversationComponent({
     });
 
     return map;
-  }, [accumulatedTurns, sharedTranscripts, transcript, client?.uid, agentUID, agoraData, roster, resolveTurnSpeaker]);
+  }, [accumulatedTurns, sharedTranscripts, transcript, agentUID, agoraData, resolveTurnSpeaker]);
 
   // Completed (END + INTERRUPTED) messages shown as history.
   // 1. Human turns (local and remote) ALWAYS show when anyone speaks.
   // 2. Agent turns ONLY show when the turn_id was explicitly tracked in activatedAgentTurnIds.
-  //    Simply enabling speech does NOT retroactively show historical agent turns.
   // When agent is silent, its turns are completely suppressed from the transcript.
   const messageList = useMemo<IMessageListItem[]>(() => {
     const list: IMessageListItem[] = [];
+    const cutoff = clearedBeforeRef.current;
+
     unifiedTranscriptMap.forEach((item) => {
       if (item.status === TurnStatus.IN_PROGRESS) return;
+      const turnTime = item.createdAt ?? 0;
+      if (cutoff > 0 && turnTime <= cutoff) return;
 
       const uidStr = String(item.uid);
       const isAgent =
@@ -1244,10 +1311,12 @@ export default function ConversationComponent({
   }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed]);
 
   const currentInProgressMessage = useMemo<IMessageListItem | null>(() => {
-    // The live partial turn renders separately from the completed history list.
+    const cutoff = clearedBeforeRef.current;
     const inProgressItems: IMessageListItem[] = [];
     unifiedTranscriptMap.forEach((item) => {
       if (item.status === TurnStatus.IN_PROGRESS && item.text?.trim()) {
+        const turnTime = item.createdAt ?? 0;
+        if (cutoff > 0 && turnTime <= cutoff) return;
         inProgressItems.push(item);
       }
     });
@@ -1281,8 +1350,37 @@ export default function ConversationComponent({
     return activeItem;
   }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed]);
 
-  // Publish local mic once the track exists; usePublish waits for RTC connection.
-  usePublish([localMicrophoneTrack]);
+  // Publish local mic and camera track (when camera is enabled); usePublish manages RTC lifecycle.
+  usePublish([
+    localMicrophoneTrack,
+    isCameraEnabled && localCameraTrack ? localCameraTrack : null,
+  ]);
+
+  // Camera on/off toggle handler
+  const handleCameraToggle = useCallback(async () => {
+    const next = !isCameraEnabled;
+    if (!next && localCameraTrack) {
+      try {
+        await localCameraTrack.setEnabled(false);
+        localCameraTrack.stop();
+        localCameraTrack.close();
+      } catch (err) {
+        console.warn('[handleCameraToggle] close error:', err);
+      }
+    }
+    setIsCameraEnabled(next);
+  }, [isCameraEnabled, localCameraTrack]);
+
+  // Track remote human users who currently have active video tracks
+  const videoRemoteUsers = useMemo(
+    () =>
+      humanRemoteUsers.filter(
+        (u) => Boolean(u.hasVideo && u.videoTrack),
+      ),
+    [humanRemoteUsers],
+  );
+
+  const hasActiveVideo = Boolean(isCameraEnabled && localCameraTrack) || videoRemoteUsers.length > 0;
 
   useClientEvent(client, 'user-joined', (user) => {
     if (user.uid.toString() === agentUID) setIsAgentConnected(true);
@@ -1488,7 +1586,7 @@ export default function ConversationComponent({
             messageList={messageList}
             currentInProgressMessage={currentInProgressMessage}
             agentUID={agentUID}
-            localUID={String(client.uid)}
+            localUID={String(agoraData.uid || client?.uid || '')}
             roster={roster}
             currentUserName={agoraData.participantName}
             onClear={handleClearTranscript}
@@ -1498,9 +1596,75 @@ export default function ConversationComponent({
           <div
             className="relative flex h-full min-h-[20rem] w-full max-w-4xl flex-col items-center justify-center"
             role="region"
-            aria-label="AI agent status visualization"
+            aria-label="AI agent status and video visualization"
           >
-            <AgentVisualizer state={visualizerState} size="lg" />
+            {hasActiveVideo ? (
+              <div className="flex flex-col items-center w-full h-full max-h-[32rem] gap-3 px-2">
+                {/* Responsive Video Tiles Grid */}
+                <div className={`grid w-full flex-1 min-h-0 gap-3 p-3 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md overflow-hidden ${
+                  (isCameraEnabled && localCameraTrack ? 1 : 0) + videoRemoteUsers.length > 1
+                    ? 'grid-cols-1 md:grid-cols-2'
+                    : 'grid-cols-1 max-w-xl'
+                }`}>
+                  {/* Local Video Tile */}
+                  {isCameraEnabled && localCameraTrack && (
+                    <div className="relative flex items-center justify-center w-full h-full min-h-[12rem] rounded-xl overflow-hidden bg-slate-900 border border-white/15 shadow-xl group">
+                      <LocalVideoTrack
+                        track={localCameraTrack}
+                        play={true}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                      <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 rounded-md bg-black/75 border border-white/15 px-2 py-1 text-[11px] font-semibold text-white shadow backdrop-blur-sm">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>{agoraData.participantName || 'You'} (You)</span>
+                      </div>
+                      <div className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-md bg-emerald-950/80 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                        <span>LIVE CAM</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Remote Video Tiles */}
+                  {videoRemoteUsers.map((remoteUser) => {
+                    const rUid = String(remoteUser.uid);
+                    const meta = roster[rUid];
+                    return (
+                      <div
+                        key={rUid}
+                        className="relative flex items-center justify-center w-full h-full min-h-[12rem] rounded-xl overflow-hidden bg-slate-900 border border-white/15 shadow-xl group"
+                      >
+                        {remoteUser.videoTrack && (
+                          <RemoteVideoTrack
+                            track={remoteUser.videoTrack}
+                            play={true}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        )}
+                        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 rounded-md bg-black/75 border border-white/15 px-2 py-1 text-[11px] font-semibold text-white shadow backdrop-blur-sm">
+                          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                          <span>{meta?.name || `User ${rUid}`}</span>
+                          {meta?.role && (
+                            <span className="text-[9px] text-white/50 border-l border-white/20 pl-1.5 font-normal">
+                              {meta.role}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Compact AI Agent Visualizer status badge when video is active */}
+                <div className="shrink-0 flex items-center gap-3 rounded-full bg-card/70 border border-white/10 px-4 py-1.5 backdrop-blur-md shadow-md">
+                  <AgentVisualizer state={visualizerState} size="sm" />
+                  <span className="text-xs font-semibold text-slate-200">
+                    IncidentWeave AI: <span className="text-violet-300 font-normal capitalize">{visualizerState}</span>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <AgentVisualizer state={visualizerState} size="lg" />
+            )}
 
             {/* AI Agent Speech Controller Banner & Button */}
             <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5 z-10">
@@ -1563,15 +1727,16 @@ export default function ConversationComponent({
           <div
             className="mx-auto flex w-fit items-center gap-3 rounded-full border border-border bg-card/80 px-4 py-2 backdrop-blur-md"
             role="group"
-            aria-label="Audio controls"
+            aria-label="Audio and video controls"
           >
+            {/* Microphone Toggle Button */}
             <div className="conversation-mic-host flex items-center justify-center">
               <button
                 id="mic-toggle-btn"
                 onClick={handleMicToggle}
                 aria-label={isEnabled ? 'Mute microphone' : 'Unmute microphone'}
                 title={isEnabled ? 'Mute microphone' : 'Unmute microphone'}
-                className={`relative flex items-center justify-center w-12 h-12 rounded-full border-2 transition-all duration-200 shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                className={`relative flex items-center justify-center w-12 h-12 rounded-full border-2 transition-all duration-200 shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 cursor-pointer active:scale-95 ${
                   isEnabled
                     ? 'border-primary bg-primary/10 hover:bg-primary/20 text-primary focus:ring-primary'
                     : 'border-destructive bg-destructive/10 hover:bg-destructive/20 text-destructive focus:ring-destructive'
@@ -1595,6 +1760,38 @@ export default function ConversationComponent({
                 )}
               </button>
             </div>
+
+            {/* Camera Toggle Button */}
+            <button
+              id="camera-toggle-btn"
+              onClick={handleCameraToggle}
+              aria-label={isCameraEnabled ? 'Turn off camera' : 'Turn on camera'}
+              title={isCameraEnabled ? 'Turn off camera' : 'Turn on camera'}
+              className={`relative flex items-center justify-center w-12 h-12 rounded-full border-2 transition-all duration-200 shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 cursor-pointer active:scale-95 ${
+                isCameraEnabled
+                  ? 'border-emerald-500 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 focus:ring-emerald-500 shadow-emerald-500/20'
+                  : 'border-destructive bg-destructive/10 hover:bg-destructive/20 text-destructive focus:ring-destructive'
+              }`}
+            >
+              {isCameraEnabled ? (
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M23 7l-7 5 7 5V7z" />
+                  <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1m5 0h6a2 2 0 0 1 2 2v4" />
+                  <path d="M23 7l-7 5 7 5V7z" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                </svg>
+              )}
+              {isCameraEnabled && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+                </span>
+              )}
+            </button>
             <MicrophoneSelector localMicrophoneTrack={localMicrophoneTrack} />
 
             <div className="h-6 w-px bg-white/10" />

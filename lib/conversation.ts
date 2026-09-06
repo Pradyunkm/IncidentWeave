@@ -105,18 +105,21 @@ export function toMessageListItem(
   };
 }
 
-// Retain original uid (toolkit uses '0' as sentinel for human speech; do NOT blindly force to localUID)
-// Also normalise punctuation spacing so all turns display consistently.
+// uid="0" is the toolkit's sentinel for local human speech.
+// Remap to actual localUID if available, and normalize punctuation spacing.
 export function normalizeTranscript(
   transcript: TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>>[],
-  _localUID?: string,
+  localUID?: string,
 ) {
   return transcript.map((item) => {
+    const uidStr = String(item.uid ?? '0');
+    const isAgent = uidStr === '100';
+    const remappedUID = (!isAgent && (uidStr === '0' || !item.uid) && localUID) ? localUID : item.uid;
     const normalizedText =
       typeof item.text === 'string'
         ? normalizeTranscriptSpacing(item.text)
         : item.text;
-    return { ...item, text: normalizedText };
+    return { ...item, uid: remappedUID, text: normalizedText };
   });
 }
 
