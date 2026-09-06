@@ -232,10 +232,11 @@ function UnknownPanel({ claims }) {
             <div key={c.id} className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
               <div className="flex items-start gap-2">
                 <AlertTriangle size={11} className="text-amber-400 flex-shrink-0 mt-0.5" />
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="text-xs text-white/80 leading-snug">{c.claim}</p>
-                  <p className="text-[10px] text-amber-400/60 mt-0.5">
-                    {c.conflicts_with_seq != null ? 'Conflicting reports between participants' : 'Needs verification'}
+                  <p className="text-[10px] text-amber-400/60 mt-1 font-medium">
+                    {c.speaker && <span>{c.speaker}{c.speakerRole ? ` · ${c.speakerRole}` : ''}</span>}
+                    {!c.speaker && 'Needs verification'}
                   </p>
                 </div>
               </div>
@@ -291,7 +292,11 @@ function ActionsPanel({ actions, now, loadingActionId, onApprove, onReject }) {
                     >
                       {action.tool ?? 'action'}
                     </span>
-                    {action.owner && <span className="text-xs text-white/40">→ {action.owner}</span>}
+                    {action.owner && (
+                      <span className="text-xs text-white/50">
+                        → {action.owner}{action.ownerRole ? ` · ${action.ownerRole}` : ''}
+                      </span>
+                    )}
                     <span
                       className={`ml-auto flex items-center gap-1 text-xs rounded px-1.5 py-0.5 border ${
                         isStale ? 'text-orange-400 border-orange-500/30 bg-orange-500/10' : 'text-white/30 border-white/10'
@@ -599,6 +604,18 @@ export default function IncidentDashboard() {
       setCopiedSummary(true)
       setTimeout(() => setCopiedSummary(false), 2000)
     })
+  }
+
+  function downloadSummaryReport() {
+    const blob = new Blob([summaryMarkdown], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `incident-report-${INCIDENT_ID}-${new Date().toISOString().slice(0, 10)}.md`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   // ── Action handlers ───────────────────────────────────────────────────────
@@ -1016,10 +1033,23 @@ export default function IncidentDashboard() {
                 <button
                   onClick={copySummaryReport}
                   disabled={summaryLoading}
-                  className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-bold text-cyan-300 hover:bg-cyan-500/20 transition-colors"
+                  className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-bold text-cyan-300 hover:bg-cyan-500/20 transition-colors disabled:opacity-40"
                 >
                   {copiedSummary ? <Check size={12} /> : <Copy size={12} />}
-                  <span>{copiedSummary ? 'Copied!' : 'Copy Markdown'}</span>
+                  <span>{copiedSummary ? 'Copied!' : 'Copy'}</span>
+                </button>
+                <button
+                  onClick={downloadSummaryReport}
+                  disabled={summaryLoading || !summaryMarkdown}
+                  className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20 transition-colors disabled:opacity-40"
+                  title="Download report as .md file"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  <span>Download .md</span>
                 </button>
                 <button onClick={() => setIsSummaryOpen(false)} className="text-white/40 hover:text-white transition-colors">
                   ✕

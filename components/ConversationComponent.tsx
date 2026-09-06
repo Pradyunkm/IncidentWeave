@@ -237,17 +237,22 @@ export default function ConversationComponent({
   const [agentState, setAgentState] = useState<AgentState | null>(null);
   const [agentMetrics, setAgentMetrics] = useState<QuickstartAgentMetric[]>([]);
 
-  // Record agent turns that occur while agent voice is activated
+  // Record agent turns that occur ONLY while agent voice is actively allowed.
+  // We track the turn_id of the CURRENT in-progress agent turn at the moment the user clicks.
+  // Historical (already completed) agent turns are NOT retroactively shown.
   useEffect(() => {
-    if (isAgentSpeechAllowed) {
-      rawTranscript.forEach((item) => {
-        const uidStr = String(item.uid);
-        const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
-        if (isAgent && item.turn_id !== undefined && item.turn_id !== null) {
+    if (!isAgentSpeechAllowed) return;
+    rawTranscript.forEach((item) => {
+      const uidStr = String(item.uid);
+      const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
+      if (isAgent && item.turn_id !== undefined && item.turn_id !== null) {
+        // Only mark IN_PROGRESS turns (ones actively being spoken right now).
+        // Completed turns that happened before the button click remain suppressed.
+        if (item.status === TurnStatus.IN_PROGRESS) {
           activatedAgentTurnIds.current.add(String(item.turn_id));
         }
-      });
-    }
+      }
+    });
   }, [rawTranscript, isAgentSpeechAllowed, agentUID]);
 
   // Shared common transcript turns from remote participants + hydrated from Redis
@@ -892,7 +897,8 @@ export default function ConversationComponent({
 
   // Completed (END + INTERRUPTED) messages shown as history.
   // 1. Human turns (local and remote) ALWAYS show when anyone speaks.
-  // 2. Agent turns ONLY show when the agent was activated by clicking "Ask AI to Speak".
+  // 2. Agent turns ONLY show when the turn_id was explicitly tracked in activatedAgentTurnIds.
+  //    Simply enabling speech does NOT retroactively show historical agent turns.
   // When agent is silent, its turns are completely suppressed from the transcript.
   const messageList = useMemo<IMessageListItem[]>(() => {
     const list: IMessageListItem[] = [];
@@ -906,13 +912,11 @@ export default function ConversationComponent({
         uidStr === String(DEFAULT_AGENT_UID);
 
       if (isAgent) {
-        // Agent was silent / not activated -> DO NOT SHOW
-        const wasActivated =
-          activatedAgentTurnIds.current.has(String(item.turn_id)) || isAgentSpeechAllowed;
-        if (wasActivated) {
-          activatedAgentTurnIds.current.add(String(item.turn_id));
-        } else {
-          return; // Agent is silent: suppress completely from transcript!
+        // STRICT suppression: ONLY show turns explicitly tracked as activated.
+        // isAgentSpeechAllowed alone is NOT sufficient — must be in activatedAgentTurnIds.
+        const wasActivated = activatedAgentTurnIds.current.has(String(item.turn_id));
+        if (!wasActivated) {
+          return; // Agent turn was silent / not explicitly triggered: suppress completely!
         }
         const cleanText = stripJsonFromText(item.text || '');
         if (!cleanText) return;
@@ -933,7 +937,7 @@ export default function ConversationComponent({
       if (timeA !== timeB) return timeA - timeB;
       return String(a.turn_id).localeCompare(String(b.turn_id));
     });
-  }, [unifiedTranscriptMap, agentUID, isAgentSpeechAllowed]);
+  }, [unifiedTranscriptMap, agentUID]);
 
   const currentInProgressMessage = useMemo<IMessageListItem | null>(() => {
     // The live partial turn renders separately from the completed history list.

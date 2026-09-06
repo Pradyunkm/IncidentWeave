@@ -16,13 +16,18 @@ export async function GET(req) {
     redis.hgetall(`incident:${incidentId}:roster`),
   ])
 
-  const claims = claimsRaw.map(c => JSON.parse(c))
-  const actions = actionsRaw.map(a => JSON.parse(a))
+  const parseItem = (item) => {
+    if (typeof item === 'object' && item !== null) return item
+    try { return JSON.parse(item) } catch { return null }
+  }
+
+  const claims = (claimsRaw || []).map(parseItem).filter(Boolean)
+  const actions = (actionsRaw || []).map(parseItem).filter(Boolean)
 
   const roster = {}
   if (rosterRaw) {
     for (const [uid, val] of Object.entries(rosterRaw)) {
-      try { roster[uid] = JSON.parse(val) } catch { roster[uid] = { name: uid, role: '' } }
+      roster[uid] = parseItem(val) || { uid, name: `User ${uid}`, role: 'Participant' }
     }
   }
 
