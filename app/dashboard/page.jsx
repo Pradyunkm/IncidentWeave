@@ -248,7 +248,16 @@ function UnknownPanel({ claims }) {
   )
 }
 
-function ActionsPanel({ actions, now, loadingActionId, onApprove, onReject }) {
+function ActionsPanel({
+  actions,
+  now,
+  loadingActionId,
+  onApprove,
+  onReject,
+  onApproveAll,
+  onRejectAll,
+  isBatchApproving,
+}) {
   const pendingActions = actions.filter((a) => a.status === 'pending')
   const resolvedActions = actions.filter((a) => a.status !== 'pending')
 
@@ -259,8 +268,30 @@ function ActionsPanel({ actions, now, loadingActionId, onApprove, onReject }) {
       </span>
     ) : null
 
+  const headerActions =
+    pendingActions.length > 0 ? (
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={onRejectAll}
+          disabled={isBatchApproving}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+          title="Reject all pending actions"
+        >
+          <XCircle size={11} /> Reject All
+        </button>
+        <button
+          onClick={onApproveAll}
+          disabled={isBatchApproving}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 shadow-sm"
+          title="Approve all pending actions"
+        >
+          <CheckCircle size={11} /> {isBatchApproving ? 'Approving…' : 'Approve All'}
+        </button>
+      </div>
+    ) : null
+
   return (
-    <Panel title="⚠ Action Approval Gate" icon={CheckCircle} badge={badge} className="min-h-0">
+    <Panel title="⚠ Action Approval Gate" icon={CheckCircle} badge={badge} action={headerActions} className="min-h-0">
       {pendingActions.length === 0 && resolvedActions.length === 0 && (
         <div className="h-20 flex flex-col items-center justify-center gap-1 text-white/25 text-xs">
           <CheckCircle size={20} />
@@ -269,6 +300,28 @@ function ActionsPanel({ actions, now, loadingActionId, onApprove, onReject }) {
       )}
 
       <div className="px-3 py-3 space-y-3 max-h-[380px] overflow-y-auto">
+        {pendingActions.length > 1 && (
+          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-xs">
+            <span className="text-white/70 font-medium">Batch Operations ({pendingActions.length} pending)</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onRejectAll}
+                disabled={isBatchApproving}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              >
+                <XCircle size={12} /> Reject All
+              </button>
+              <button
+                onClick={onApproveAll}
+                disabled={isBatchApproving}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 shadow-sm"
+              >
+                <CheckCircle size={12} /> {isBatchApproving ? 'Approving…' : 'Approve All'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {pendingActions.map((action) => {
           const isStale = now - action.timestamp > STALE_THRESHOLD_MS
           const ageLabel = formatAge(action.timestamp, now)
@@ -438,6 +491,7 @@ export default function IncidentDashboard() {
   const [roster, setRoster] = useState({})
   const [transcripts, setTranscripts] = useState([])
   const [loadingActionId, setLoadingActionId] = useState(null)
+  const [isBatchApproving, setIsBatchApproving] = useState(false)
   const [toasts, setToasts] = useState([])
   const [approvedTools, setApprovedTools] = useState(new Set())
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -673,6 +727,61 @@ export default function IncidentDashboard() {
   function handleReject(action) {
     setActions((prev) => prev.map((a) => (a.id === action.id ? { ...a, status: 'rejected' } : a)))
     addToast('Action rejected')
+  }
+
+  async function handleApproveAll() {
+    const pending = actions.filter((a) => a.status === 'pending')
+    if (pending.length === 0) return
+    setIsBatchApproving(true)
+    setActions((prev) => prev.map((a) => (a.status === 'pending' ? { ...a, status: 'approved' } : a)))
+    try {
+      await Promise.allSettled(
+        pending.map(async (action) => {
+          if (action.tool === 'slack') {
+            await fetch('/api/actions/slack', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: action.task, owner: action.owner, incidentId: INCIDENT_ID }),
+            }).catch(() => {})
+            setApprovedTools((s) => new Set([...s, 'slack']))
+          }
+          if (action.tool === 'jira') {
+            await fetch('/api/actions/jira', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ summary: action.task, owner: action.owner }),
+            }).catch(() => {})
+            setApprovedTools((s) => new Set([...s, 'jira']))
+          }
+          if (action.tool === 'pagerduty') {
+            await fetch('/api/actions/pagerduty', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ summary: action.task, owner: action.owner, incidentId: INCIDENT_ID }),
+            }).catch(() => {})
+            setApprovedTools((s) => new Set([...s, 'pagerduty']))
+          }
+          await fetch('/api/incident/claim', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ incidentId: INCIDENT_ID, claim: { ...action, status: 'approved', type: 'fact' } }),
+          }).catch(() => {})
+        })
+      )
+      addToast(`Approved all ${pending.length} pending action${pending.length > 1 ? 's' : ''}!`)
+    } catch (err) {
+      console.error('Approve all error:', err)
+      addToast('Error during batch approval', 'error')
+    } finally {
+      setIsBatchApproving(false)
+    }
+  }
+
+  function handleRejectAll() {
+    const pending = actions.filter((a) => a.status === 'pending')
+    if (pending.length === 0) return
+    setActions((prev) => prev.map((a) => (a.status === 'pending' ? { ...a, status: 'rejected' } : a)))
+    addToast(`Rejected all ${pending.length} action${pending.length > 1 ? 's' : ''}`)
   }
 
   const sev = deriveSeverity(claims)
@@ -931,7 +1040,16 @@ export default function IncidentDashboard() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           <LiveTranscriptsPanel transcripts={transcripts} onAnalyze={() => runAnalysis(false)} isAnalyzing={isAnalyzing} />
           <UnknownPanel claims={claims} />
-          <ActionsPanel actions={actions} now={now} loadingActionId={loadingActionId} onApprove={handleApprove} onReject={handleReject} />
+          <ActionsPanel
+            actions={actions}
+            now={now}
+            loadingActionId={loadingActionId}
+            onApprove={handleApprove}
+            onReject={handleReject}
+            onApproveAll={handleApproveAll}
+            onRejectAll={handleRejectAll}
+            isBatchApproving={isBatchApproving}
+          />
         </div>
       </main>
 

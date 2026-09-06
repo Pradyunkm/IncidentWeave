@@ -417,7 +417,7 @@ Open http://localhost:3000/dashboard in a third tab to see the live intelligence
 | Topic-aware contradiction detection | Topic fingerprinting (CPU%, HTTP, database, network) + explicit disagreement markers — eliminates false positives |
 | Downloadable Incident Report | `.md` file download from dashboard Report modal; structured with facts, hypotheses, contradictions, timeline |
 | Incident Timeline | Chronological strip, T+mm:ss, type-colored |
-| Action Approval Gate | Approve/Reject with loading state |
+| Action Approval Gate | Approve/Reject + Approve All / Reject All batch actions with loading state |
 | Staleness indicator | 10-min threshold, orange badge, "Awaiting owner" |
 | Jira integration | REST API v3, real ticket creation |
 | Slack integration | Incoming webhook, formatted message |
