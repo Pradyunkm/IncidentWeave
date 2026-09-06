@@ -1,7 +1,12 @@
 {
   "name": "convoai-quickstart-web-nextjs",
   "version": "0.1.0",
-  "description": "Next.js quickstart for building conversational AI applications with Agora's Conversational AI Engine",
+  "description": "IncidentWeave - AI incident command room with live multi-party voice transcript and Truth Graph",
+  "homepage": "https://incidentweave-live.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Pradyunkm/IncidentWeave.git"
+  },
   "private": true,
   "engines": {
     "node": ">=22"

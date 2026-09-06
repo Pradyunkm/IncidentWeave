@@ -1,79 +1,47 @@
-# Agora Conversational AI Next.js Quickstart
+# IncidentWeave — AI Incident Command Room
 
-[![Build](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs/actions/workflows/build-check.yml/badge.svg)](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs/actions/workflows/build-check.yml)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-incidentweave--live.vercel.app-00dfd8?style=flat-square&logo=vercel)](https://incidentweave-live.vercel.app)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Pradyunkm%2FIncidentWeave-181717?style=flat-square&logo=github)](https://github.com/Pradyunkm/IncidentWeave)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)
 
-Build a production-style voice agent in minutes with Next.js and the Agora Conversational AI Engine, including voice agent visualizer ([Agent UIKit](https://agoraio-conversational-ai.github.io/agent-uikit/)), live transcript, and real-time pipeline latency via `AGENT_METRICS` ([Agent Toolkit](https://github.com/AgoraIO-Conversational-AI/agent-client-toolkit-ts)).
+> **Live Deployment:** [https://incidentweave-live.vercel.app](https://incidentweave-live.vercel.app)  
+> **GitHub Repository:** [https://github.com/Pradyunkm/IncidentWeave](https://github.com/Pradyunkm/IncidentWeave)
+
+**IncidentWeave** turns chaotic multi-person incident calls into structured, actionable intelligence in real time. It features a **common multi-party voice transcript** with real speaker attribution, live AI claim extraction, automated contradiction detection, a dynamic Truth Graph, and approval gates for Jira, Slack, and PagerDuty.
+
+## Key Capabilities
+
+- 🎙️ **Common Multi-Party Transcript**: When anyone speaks in the room, their speech is instantly broadcast over Agora RTM to all participants with their actual name, role, and timestamp.
+- 🤖 **AI Incident Commander**: Listens to everyone simultaneously via Deepgram STT, GPT-4o-mini, and MiniMax TTS.
+- ⚡ **Truth Graph**: Real-time ReactFlow graph visualizing facts, hypotheses, and contradictions between speakers.
+- 🛡️ **Action Gate**: Human-in-the-loop approval before firing actions to Slack, Jira, or PagerDuty.
+- 💬 **Live Meeting Chat & Audio Recorder**: Full in-call text chat, DM channels, and dual-track meeting audio recorder.
 
 ## Prerequisites
 
 - [Node.js 22+](https://nodejs.org/en/download/)
-- [pnpm](https://pnpm.io/installation)
-- [Agora CLI](https://github.com/AgoraIO-Community/cli)
+- [npm](https://www.npmjs.com/) or [pnpm](https://pnpm.io/installation)
+- Agora Developer Account (App ID + App Certificate)
+- Upstash Redis Account (for shared state & transcript persistence)
 
-## Run It
-
-Getting started is quick and easy: install the CLI _(skip if you already have it)_ , scaffold the Next.js quickstart using the Agora CLI, install dependencies, and run.
-
-1. **Install the Agora CLI and sign in**
-   _(skip if `agora` is already on your PATH)_:
-
-   macOS and Linux:
-
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/AgoraIO/cli/main/install.sh | sh -s -- --add-to-path
-   ```
-
-   Windows PowerShell:
-
-   ```powershell
-   irm https://dl.agora.io/cli/install.ps1 | iex
-   ```
-
-   If the Windows install command fails in PowerShell, try running the macOS/Linux command from [Git Bash](https://git-scm.com/downloads/win), then open a new terminal and run `agora --help` to confirm the CLI is on your PATH.
-
-   Then verify and sign in:
-
-   ```bash
-   agora --help
-   agora login
-   ```
-
-   If `agora --help` is not found after install, close and reopen your terminal, then try again. If it still fails, check that the installer-added Agora CLI location is on your shell `PATH`.
-
-2. **Scaffold and run**
-   `agora init` clones the starter, binds an Agora project, and writes `.env.local`. (replace `my-nextjs-demo` with your own project name):
-
-   ```bash
-   agora init my-nextjs-demo --template nextjs
-   cd my-nextjs-demo
-   pnpm install
-   pnpm dev
-   ```
-
-3. Open [http://localhost:3000](http://localhost:3000) and click **Start conversation**.
-
-If the agent does not join or transcripts do not appear, run **`agora project doctor --deep`** to check credentials, feature enablement, network reachability, and local env binding.
-
-### Working from a clone of this repository
-
-Use this path if you already cloned **this** repo (for example to contribute or fork):
+## Run Locally
 
 ```bash
-git clone https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs.git
-cd agent-quickstart-nextjs
-agora login
-agora project use <your-project>
-pnpm install
-agora project env write .env.local
-agora project doctor --deep
-pnpm dev
+git clone https://github.com/Pradyunkm/IncidentWeave.git
+cd IncidentWeave
+npm install
+cp env.local.example .env.local
+# Add your NEXT_PUBLIC_AGORA_APP_ID, NEXT_AGORA_APP_CERTIFICATE, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+npm run dev
 ```
 
-### Deploy to Vercel
+Open [http://localhost:3000](http://localhost:3000) to create or join an incident room. Open a second tab or share the room link with teammates to test multi-party voice and shared transcripts!
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs&project-name=agent-quickstart-nextjs&repository-name=agent-quickstart-nextjs&env=NEXT_PUBLIC_AGORA_APP_ID,NEXT_AGORA_APP_CERTIFICATE&envDescription=Agora%20credentials%20needed%20to%20run%20the%20app&envLink=https%3A%2F%2Fgithub.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs%23run-it&demo-title=Agora%20Conversational%20AI%20Next.js%20Quickstart&demo-description=Official%20Next.js%20quickstart%20for%20building%20browser-based%20voice%20AI%20with%20Agora&demo-image=https%3A%2F%2Fraw.githubusercontent.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs%2Fmain%2F.github%2Fassets%2FConversation-Ai-Client.gif)
+### Live Deployment
+
+IncidentWeave is continuously deployed on Vercel:
+👉 **[https://incidentweave-live.vercel.app](https://incidentweave-live.vercel.app)**
 
 To populate Vercel env vars from your bound Agora project:
 

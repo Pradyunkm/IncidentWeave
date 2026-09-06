@@ -2,6 +2,9 @@
 
 > **AI-powered multi-party incident command room** built on Agora Conversational AI
 
+- 🌐 **Live Deployment:** [https://incidentweave-live.vercel.app](https://incidentweave-live.vercel.app)
+- 💻 **GitHub Repository:** [https://github.com/Pradyunkm/IncidentWeave](https://github.com/Pradyunkm/IncidentWeave)
+
 ---
 
 ## 1. Project Description
@@ -402,6 +405,7 @@ Open http://localhost:3000/dashboard in a third tab to see the live intelligence
 
 | Capability | Evidence |
 |---|---|
+| Common multi-party live transcript | Agora RTM `incidentweave_transcript` broadcast + `/api/incident/transcript` Redis sync with real speaker names & roles |
 | Multi-party voice room | `remoteUids: remoteUidList` in `invite-agent/route.ts` |
 | Real speaker attribution | `findLastHumanUid()` → `speakerUid` on every claim |
 | Claim extraction pipeline | `parseClaimFromAgentResponse` → `/api/incident/claim` |

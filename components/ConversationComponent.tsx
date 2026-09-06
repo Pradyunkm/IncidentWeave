@@ -31,6 +31,8 @@ import {
   mapAgentVisualizerState,
   normalizeTimestampMs,
   normalizeTranscript,
+  normalizeTranscriptSpacing,
+  type IMessageListItem,
 } from '@/lib/conversation';
 import { MicrophoneSelector } from './MicrophoneSelector';
 import {
@@ -51,6 +53,8 @@ import type { ConversationComponentProps } from '@/types/conversation';
 
 // Cap the displayed issues list to avoid overwhelming the UI during a cascade of errors.
 const MAX_CONNECTION_ISSUES = 6;
+
+const RTM_TRANSCRIPT_TYPE = 'incidentweave_transcript';
 
 type AgoraRtcWithParameters = typeof AgoraRTC & {
   setParameter?: (key: string, value: unknown) => void;
@@ -138,6 +142,11 @@ export default function ConversationComponent({
   >([]);
   const [agentState, setAgentState] = useState<AgentState | null>(null);
   const [agentMetrics, setAgentMetrics] = useState<QuickstartAgentMetric[]>([]);
+
+  // Shared common transcript turns from remote participants + hydrated from Redis
+  const [sharedTranscripts, setSharedTranscripts] = useState<Record<string, IMessageListItem>>({});
+  const savedTranscriptTurnIds = useRef<Set<string>>(new Set());
+  const lastBroadcastTurnRef = useRef<Record<string, string>>({});
 
   // Tracks turn IDs already submitted to /api/incident/claim to prevent duplicate POSTs.
   const processedTurnIds = useRef<Set<string>>(new Set());
@@ -348,6 +357,40 @@ export default function ConversationComponent({
         return;
       }
 
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        (parsed as { type?: string }).type === RTM_TRANSCRIPT_TYPE
+      ) {
+        const item = parsed as {
+          turn_id: string | number;
+          uid: string;
+          speakerName?: string;
+          speakerRole?: string;
+          text?: string;
+          status?: unknown;
+          createdAt?: number;
+          isAgent?: boolean;
+        };
+
+        if (String(item.uid) !== String(client.uid)) {
+          setSharedTranscripts((prev) => ({
+            ...prev,
+            [String(item.turn_id)]: {
+              turn_id: item.turn_id,
+              uid: item.uid,
+              speakerName: item.speakerName,
+              speakerRole: item.speakerRole,
+              text: item.text,
+              status: item.status,
+              createdAt: item.createdAt,
+              isAgent: Boolean(item.isAgent),
+            },
+          }));
+        }
+        return;
+      }
+
       if (isRtmMessageErrorPayload(parsed)) {
         const p = parsed;
         addConnectionIssue({
@@ -383,7 +426,7 @@ export default function ConversationComponent({
     return () => {
       rtmClient.removeEventListener('message', handleRtmMessage);
     };
-  }, [rtmClient, addConnectionIssue]);
+  }, [rtmClient, addConnectionIssue, client?.uid]);
 
   // Parse ALL JSON claim blocks from an agent turn's text response.
   // Extracts every object containing a "type" key and validates it.
@@ -527,6 +570,120 @@ export default function ConversationComponent({
     });
   }, [rawTranscript, agentUID, incidentId]);
 
+  // Hydrate room transcript history from Redis on mount/room join
+  useEffect(() => {
+    let mounted = true;
+    fetch(`/api/incident/transcript?id=${encodeURIComponent(incidentId)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (mounted && Array.isArray(data.transcripts)) {
+          setSharedTranscripts((prev) => {
+            const next = { ...prev };
+            for (const item of data.transcripts) {
+              const id = String(item.turn_id);
+              if (!next[id]) {
+                next[id] = item;
+              }
+            }
+            return next;
+          });
+        }
+      })
+      .catch((err) => console.warn('[incident/transcript] load failed:', err));
+    return () => {
+      mounted = false;
+    };
+  }, [incidentId]);
+
+  // Synchronize local voice turns to all meeting participants over RTM,
+  // and persist completed turns (both human and agent) to Redis.
+  useEffect(() => {
+    if (!rtmClient || !client?.uid) return;
+
+    rawTranscript.forEach((item) => {
+      const isLocal =
+        item.uid === '0' || String(item.uid) === String(client.uid);
+      const isAgentTurn =
+        String(item.uid) === agentUID || String(item.uid) === String(DEFAULT_AGENT_UID);
+
+      const turnIdStr = String(item.turn_id);
+      const text = typeof item.text === 'string' ? item.text.trim() : '';
+      if (!text) return;
+
+      if (isLocal) {
+        // Broadcast local speaker's turn to all participants in the room
+        const turnKey = `${turnIdStr}_${item.status}_${text}`;
+        if (lastBroadcastTurnRef.current[turnIdStr] !== turnKey) {
+          lastBroadcastTurnRef.current[turnIdStr] = turnKey;
+
+          const payload = JSON.stringify({
+            type: RTM_TRANSCRIPT_TYPE,
+            turn_id: item.turn_id,
+            uid: String(client.uid),
+            speakerName: agoraData.participantName || `User ${client.uid}`,
+            speakerRole: agoraData.participantRole || 'Engineer',
+            text: normalizeTranscriptSpacing(text),
+            status: item.status,
+            createdAt: normalizeTimestampMs(item._time || Date.now()),
+            isAgent: false,
+          });
+
+          rtmClient.publish(agoraData.channel, payload).catch(() => {});
+        }
+
+        // When local turn completes or is interrupted, save to Redis
+        if (
+          (item.status === TurnStatus.END || item.status === TurnStatus.INTERRUPTED) &&
+          !savedTranscriptTurnIds.current.has(turnIdStr)
+        ) {
+          savedTranscriptTurnIds.current.add(turnIdStr);
+          fetch('/api/incident/transcript', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              incidentId,
+              item: {
+                turn_id: item.turn_id,
+                uid: String(client.uid),
+                speakerName: agoraData.participantName || `User ${client.uid}`,
+                speakerRole: agoraData.participantRole || 'Engineer',
+                text: normalizeTranscriptSpacing(text),
+                status: item.status,
+                createdAt: normalizeTimestampMs(item._time || Date.now()),
+                isAgent: false,
+              },
+            }),
+          }).catch(() => {});
+        }
+      } else if (isAgentTurn) {
+        // When AI agent turn completes, persist it to Redis for late joiners
+        if (
+          (item.status === TurnStatus.END || item.status === TurnStatus.INTERRUPTED) &&
+          !savedTranscriptTurnIds.current.has(turnIdStr)
+        ) {
+          savedTranscriptTurnIds.current.add(turnIdStr);
+          fetch('/api/incident/transcript', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              incidentId,
+              item: {
+                turn_id: item.turn_id,
+                uid: agentUID,
+                speakerName: 'IncidentWeave AI',
+                speakerRole: 'AI Incident Commander',
+                text: normalizeTranscriptSpacing(text),
+                status: item.status,
+                createdAt: normalizeTimestampMs(item._time || Date.now()),
+                isAgent: true,
+              },
+            }),
+          }).catch(() => {});
+        }
+      }
+    });
+  }, [rawTranscript, agoraData, client?.uid, rtmClient, incidentId, agentUID]);
+
   // The toolkit uses uid="0" for local user speech — remap to actual RTC UID
   // so the transcript panel renders user messages on the correct side.
   // Also normalize punctuation spacing for display when upstream text arrives compacted.
@@ -559,15 +716,84 @@ export default function ConversationComponent({
     return Object.values(map);
   }, [roster, agoraData, remoteUsers, agentUID]);
 
+  // Unified chronological transcript combining:
+  // 1. Local turns (both in-progress and completed from AgoraVoiceAI)
+  // 2. Remote human turns received via RTM / hydrated from Redis
+  // 3. Agent turns
+  const unifiedTranscriptMap = useMemo(() => {
+    const map = new Map<string, IMessageListItem>();
+
+    // 1. Seed with shared/remote/hydrated transcripts
+    Object.values(sharedTranscripts).forEach((item) => {
+      map.set(String(item.turn_id), { ...item });
+    });
+
+    // 2. Overlay normalized local turns from AgoraVoiceAI
+    // Local turns take precedence for local user turns and agent turns
+    transcript.forEach((item) => {
+      const turnIdStr = String(item.turn_id);
+      const uidStr = String(item.uid);
+      const isAgent = uidStr === agentUID || uidStr === String(DEFAULT_AGENT_UID);
+      const isLocal = !isAgent && (item.uid === '0' || uidStr === String(client?.uid));
+
+      const existing = map.get(turnIdStr);
+      map.set(turnIdStr, {
+        turn_id: item.turn_id,
+        uid: isLocal ? String(client?.uid) : isAgent ? agentUID : uidStr,
+        text: typeof item.text === 'string' ? item.text : '',
+        status: item.status,
+        createdAt:
+          typeof item._time === 'number'
+            ? normalizeTimestampMs(item._time)
+            : existing?.createdAt || Date.now(),
+        speakerName: isAgent
+          ? 'IncidentWeave AI'
+          : isLocal
+            ? (agoraData.participantName || `User ${client?.uid}`)
+            : (existing?.speakerName || roster[uidStr]?.name || `User ${uidStr}`),
+        speakerRole: isAgent
+          ? 'AI Incident Commander'
+          : isLocal
+            ? (agoraData.participantRole || 'Engineer')
+            : (existing?.speakerRole || roster[uidStr]?.role || ''),
+        isAgent,
+      });
+    });
+
+    return map;
+  }, [sharedTranscripts, transcript, client?.uid, agentUID, agoraData, roster]);
+
   // Completed (END + INTERRUPTED) messages shown as history.
   // INTERRUPTED must be included — if the agent's first turn is cut off,
   // messageList stays empty and the first interrupted turn is never shown.
-  const messageList = useMemo(() => getMessageList(transcript), [transcript]);
+  const messageList = useMemo<IMessageListItem[]>(() => {
+    const list: IMessageListItem[] = [];
+    unifiedTranscriptMap.forEach((item) => {
+      if (item.status !== TurnStatus.IN_PROGRESS && item.text?.trim()) {
+        list.push(item);
+      }
+    });
+    // Sort strictly chronologically
+    return list.sort((a, b) => {
+      const timeA = a.createdAt ?? 0;
+      const timeB = b.createdAt ?? 0;
+      if (timeA !== timeB) return timeA - timeB;
+      return String(a.turn_id).localeCompare(String(b.turn_id));
+    });
+  }, [unifiedTranscriptMap]);
 
-  const currentInProgressMessage = useMemo(() => {
+  const currentInProgressMessage = useMemo<IMessageListItem | null>(() => {
     // The live partial turn renders separately from the completed history list.
-    return getCurrentInProgressMessage(transcript);
-  }, [transcript]);
+    let activeItem: IMessageListItem | null = null;
+    unifiedTranscriptMap.forEach((item) => {
+      if (item.status === TurnStatus.IN_PROGRESS && item.text?.trim()) {
+        if (!activeItem || (item.createdAt ?? 0) >= (activeItem.createdAt ?? 0)) {
+          activeItem = item;
+        }
+      }
+    });
+    return activeItem;
+  }, [unifiedTranscriptMap]);
 
   // Publish local mic once the track exists; usePublish waits for RTC connection.
   usePublish([localMicrophoneTrack]);
@@ -757,6 +983,8 @@ export default function ConversationComponent({
             currentInProgressMessage={currentInProgressMessage}
             agentUID={agentUID}
             localUID={String(client.uid)}
+            roster={roster}
+            currentUserName={agoraData.participantName}
           />
         }
         visualizer={

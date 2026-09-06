@@ -11,10 +11,13 @@ import type { AgentVisualizerState } from '@/components/AgentVisualizer';
 // so we can drop the uikit package dependency which causes SSR crashes.
 export type IMessageListItem = {
   turn_id?: string | number;
-  uid: number;
+  uid: number | string;
   text?: string;
   status?: unknown;
   createdAt?: number;
+  speakerName?: string;
+  speakerRole?: string;
+  isAgent?: boolean;
 };
 
 // Fixes compacted punctuation emitted by some TTS/ASR providers where sentence-ending
@@ -82,7 +85,7 @@ export function toMessageListItem(
 ): IMessageListItem {
   return {
     turn_id: item.turn_id,
-    uid: Number(item.uid) || 0,
+    uid: item.uid || 0,
     text: typeof item.text === 'string' ? item.text : '',
     status: item.status as unknown as IMessageListItem['status'],
     createdAt:
